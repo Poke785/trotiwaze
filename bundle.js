@@ -2499,6 +2499,7 @@
       this.addHazardMarker(h);
       return h;
     }
+  } // ← end HazardManager
 
   // =========================================================================
   // 14. WebAudio Horn Synthesizer (Clochette, Klaxon Waze, Alerte Urgence)
