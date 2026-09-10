@@ -88,19 +88,7 @@
         if (raw) {
           this.users = JSON.parse(raw);
         } else {
-          // Default demo account
-          this.users = [
-            {
-              id: 'usr_demo',
-              username: 'RiderParis',
-              email: 'rider@trottiwaze.fr',
-              avatar: '🦊',
-              passwordHash: this.simpleHash('trotti123'),
-              createdAt: '10/09/2026',
-              stats: { totalKm: 142.5, totalRides: 18, reportsCount: 4 }
-            }
-          ];
-          this.saveUsers();
+          this.users = [];
         }
       } catch (e) {
         this.users = [];
@@ -306,8 +294,18 @@
   }
 
   // =========================================================================
-  // 3. Garage & Multi-Scooter Fleet Manager (Gestion de plusieurs Trottinettes)
+  // 3. Garage & Multi-Vehicle Fleet Manager (Trottinettes, Gyroroues, E-Skate, VAE)
   // =========================================================================
+  const VEHICLE_TYPES_PRESETS = {
+    '🛴': { name: 'Trottinette Standard', type: 'trotti', icon: '🛴', wh: 474, volts: 36, ah: 13, scootKg: 18, speed: 25 },
+    '⚡': { name: 'Trottinette Sport Bi-Moteur', type: 'trotti_sport', icon: '⚡', wh: 1400, volts: 60, ah: 23, scootKg: 32, speed: 45 },
+    '🎡': { name: 'Gyroroue / Monoroue', type: 'gyroroue', icon: '🎡', wh: 1500, volts: 84, ah: 18, scootKg: 24, speed: 35 },
+    '🛹': { name: 'E-Skate / Longboard', type: 'eskate', icon: '🛹', wh: 350, volts: 36, ah: 10, scootKg: 8, speed: 30 },
+    '🚲': { name: 'Vélo Électrique (VAE)', type: 'vae', icon: '🚲', wh: 500, volts: 36, ah: 14, scootKg: 22, speed: 25 },
+    '🛞': { name: 'Onewheel Tout-Terrain', type: 'onewheel', icon: '🛞', wh: 325, volts: 63, ah: 5.2, scootKg: 14, speed: 25 },
+    '🛵': { name: 'Draisine Électrique', type: 'draisine', icon: '🛵', wh: 650, volts: 48, ah: 13.5, scootKg: 20, speed: 25 }
+  };
+
   class GarageManager {
     constructor(onActiveChangedCallback) {
       this.onActiveChangedCallback = onActiveChangedCallback;
@@ -322,46 +320,7 @@
         if (raw) {
           this.scooters = JSON.parse(raw);
         } else {
-          // Default starter garage with 3 popular scooter models
-          this.scooters = [
-            {
-              id: 'scoot_1',
-              name: 'Ninebot MAX G30',
-              icon: '🛴',
-              batteryCapacityWh: 551,
-              currentPercentage: 80,
-              riderWeightKg: 75,
-              scooterWeightKg: 19,
-              speedPrefKmh: 25,
-              volts: 36,
-              amphours: 15.3
-            },
-            {
-              id: 'scoot_2',
-              name: 'Xiaomi Mi Pro 2',
-              icon: '🟢',
-              batteryCapacityWh: 474,
-              currentPercentage: 85,
-              riderWeightKg: 75,
-              scooterWeightKg: 14.2,
-              speedPrefKmh: 25,
-              volts: 36,
-              amphours: 12.8
-            },
-            {
-              id: 'scoot_3',
-              name: 'Dualtron Mini Special',
-              icon: '⚡',
-              batteryCapacityWh: 1040,
-              currentPercentage: 90,
-              riderWeightKg: 75,
-              scooterWeightKg: 22,
-              speedPrefKmh: 45,
-              volts: 52,
-              amphours: 20
-            }
-          ];
-          this.saveGarage();
+          this.scooters = [];
         }
 
         const savedActiveId = localStorage.getItem('trottiwaze_active_scooter_id');
@@ -369,9 +328,6 @@
           this.activeScooterId = savedActiveId;
         } else {
           this.activeScooterId = this.scooters[0] ? this.scooters[0].id : null;
-          if (this.activeScooterId) {
-            localStorage.setItem('trottiwaze_active_scooter_id', this.activeScooterId);
-          }
         }
       } catch (e) {
         this.scooters = [];
@@ -391,10 +347,10 @@
       const active = this.scooters.find(s => s.id === this.activeScooterId);
       return active || this.scooters[0] || {
         id: 'scoot_default',
-        name: 'Ma Trottinette',
+        name: 'Mon Véhicule',
         icon: '🛴',
         batteryCapacityWh: 474,
-        currentPercentage: 80,
+        currentPercentage: 100,
         riderWeightKg: 75,
         scooterWeightKg: 18,
         speedPrefKmh: 25
@@ -418,15 +374,18 @@
       const id = 'scoot_' + Date.now();
       const newScoot = {
         id,
-        name: data.name || 'Nouvelle Trottinette',
+        name: data.name || 'Nouveau Modèle',
         icon: data.icon || '🛴',
         batteryCapacityWh: parseInt(data.batteryCapacityWh, 10) || 474,
-        currentPercentage: parseInt(data.currentPercentage, 10) || 80,
+        currentPercentage: parseInt(data.currentPercentage, 10) || 100,
         riderWeightKg: parseInt(data.riderWeightKg, 10) || 75,
         scooterWeightKg: parseInt(data.scooterWeightKg, 10) || 18,
         speedPrefKmh: parseInt(data.speedPrefKmh, 10) || 25,
         volts: data.volts || 36,
-        amphours: data.amphours || 13
+        amphours: data.amphours || 13,
+        odometerKm: parseFloat(data.odometerKm) || 0,
+        lastTireCheckKm: parseFloat(data.lastTireCheckKm) || 0,
+        lastBrakeCheckKm: parseFloat(data.lastBrakeCheckKm) || 0
       };
       this.scooters.push(newScoot);
       this.setActiveScooter(id);
@@ -444,7 +403,10 @@
           riderWeightKg: parseInt(data.riderWeightKg, 10) || this.scooters[index].riderWeightKg,
           scooterWeightKg: parseInt(data.scooterWeightKg, 10) || this.scooters[index].scooterWeightKg,
           speedPrefKmh: parseInt(data.speedPrefKmh, 10) || this.scooters[index].speedPrefKmh,
-          currentPercentage: parseInt(data.currentPercentage, 10) || this.scooters[index].currentPercentage
+          currentPercentage: parseInt(data.currentPercentage, 10) || this.scooters[index].currentPercentage,
+          odometerKm: data.odometerKm !== undefined ? parseFloat(data.odometerKm) : (this.scooters[index].odometerKm || 0),
+          lastTireCheckKm: data.lastTireCheckKm !== undefined ? parseFloat(data.lastTireCheckKm) : (this.scooters[index].lastTireCheckKm || 0),
+          lastBrakeCheckKm: data.lastBrakeCheckKm !== undefined ? parseFloat(data.lastBrakeCheckKm) : (this.scooters[index].lastBrakeCheckKm || 0)
         };
         this.saveGarage();
         if (this.activeScooterId === id && this.onActiveChangedCallback) {
@@ -455,15 +417,42 @@
       return null;
     }
 
-    deleteScooter(id) {
-      if (this.scooters.length <= 1) {
-        return { success: false, message: 'Vous devez conserver au moins un modèle dans votre garage.' };
+    addKmToActiveScooter(km) {
+      const active = this.getActiveScooter();
+      if (!active || isNaN(km) || km <= 0) return;
+      active.odometerKm = parseFloat(((active.odometerKm || 0) + km).toFixed(2));
+      this.saveGarage();
+      if (this.onActiveChangedCallback) this.onActiveChangedCallback(active);
+    }
+
+    recordTireCheck(scooterId) {
+      const scoot = this.scooters.find(s => s.id === scooterId);
+      if (scoot) {
+        scoot.lastTireCheckKm = scoot.odometerKm || 0;
+        this.saveGarage();
+        if (this.onActiveChangedCallback) this.onActiveChangedCallback(scoot);
+        return true;
       }
+      return false;
+    }
+
+    recordBrakeCheck(scooterId) {
+      const scoot = this.scooters.find(s => s.id === scooterId);
+      if (scoot) {
+        scoot.lastBrakeCheckKm = scoot.odometerKm || 0;
+        this.saveGarage();
+        if (this.onActiveChangedCallback) this.onActiveChangedCallback(scoot);
+        return true;
+      }
+      return false;
+    }
+
+    deleteScooter(id) {
       this.scooters = this.scooters.filter(s => s.id !== id);
       if (this.activeScooterId === id) {
-        this.activeScooterId = this.scooters[0].id;
+        this.activeScooterId = this.scooters[0] ? this.scooters[0].id : null;
         if (this.onActiveChangedCallback) {
-          this.onActiveChangedCallback(this.scooters[0]);
+          this.onActiveChangedCallback(this.getActiveScooter());
         }
       }
       this.saveGarage();
@@ -472,47 +461,102 @@
   }
 
   // =========================================================================
-  // 4. Battery Engine
+  // 4. Battery & Energy Engine (Calcul Dénivelé, Montées, KERS & Impact Froid)
   // =========================================================================
   class BatteryEngine {
-    constructor(garageManager) {
+    constructor(garageManager, weatherEngine = null) {
       this.garageManager = garageManager;
+      this.weatherEngine = weatherEngine;
       this.baseEfficiencyWhPerKm = 16.5;
     }
 
     get config() {
       return this.garageManager ? this.garageManager.getActiveScooter() : {
-        scooterName: 'Ninebot MAX G30',
-        batteryCapacityWh: 551,
-        currentPercentage: 80,
+        name: 'Mon Véhicule',
+        batteryCapacityWh: 474,
+        currentPercentage: 100,
         riderWeightKg: 75,
-        scooterWeightKg: 19,
+        scooterWeightKg: 18,
         speedPrefKmh: 25
       };
     }
 
-    estimateTrip(distanceKm, elevationGainM = 5) {
+    estimateTrip(distanceKm, elevationGainM = 5, elevationLossM = 5) {
       const cfg = this.config;
       const totalMassKg = (cfg.riderWeightKg || 75) + (cfg.scooterWeightKg || 18);
       const weightFactor = totalMassKg / 90;
       const speedRatio = Math.max(15, cfg.speedPrefKmh || 25) / 20;
       const speedFactor = Math.pow(speedRatio, 1.7);
+
+      // 1. Énergie de roulement + traînée aérodynamique sur le plat
       const flatEnergyWh = distanceKm * this.baseEfficiencyWhPerKm * weightFactor * speedFactor;
-      const climbEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationGainM)) / (3600 * 0.70);
-      const totalWhUsed = flatEnergyWh + climbEnergyWh;
-      const currentWh = ((cfg.currentPercentage || 80) / 100) * (cfg.batteryCapacityWh || 474);
-      const remainingWh = Math.max(0, currentWh - totalWhUsed);
-      const remainingPct = Math.round((remainingWh / (cfg.batteryCapacityWh || 474)) * 100);
+
+      // 2. Énergie en montée (dénivelé positif) : E_climb = (m * g * deltaH) / (3600 * rendement)
+      const avgSlopePct = distanceKm > 0 ? (elevationGainM / (distanceKm * 1000)) * 100 : 0;
+      const motorEfficiency = avgSlopePct > 6 ? 0.60 : 0.72;
+      const climbEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationGainM)) / (3600 * motorEfficiency);
+
+      // 3. Récupération d'énergie au freinage régénératif (KERS) en descente (~25%)
+      const regenEfficiency = 0.25;
+      const regenEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationLossM) * regenEfficiency) / 3600;
+
+      // 4. Énergie nette mécanique
+      const netMechanicalWh = Math.max(1, flatEnergyWh + climbEnergyWh - regenEnergyWh);
+
+      // 5. Modélisation thermique de la batterie Lithium-Ion (Température Open-Meteo)
+      const tempC = (this.weatherEngine && this.weatherEngine.currentWeather && this.weatherEngine.currentWeather.tempC !== undefined) 
+        ? this.weatherEngine.currentWeather.tempC : 19;
+      
+      let thermalFactor = 1.0;
+      let thermalLabel = `🌡️ ${tempC}°C • Rendement optimal`;
+
+      if (tempC <= -5) {
+        thermalFactor = 0.68; // -32% perte grand froid
+        thermalLabel = `❄️ Grand Froid (${tempC}°C) : -32% d'autonomie`;
+      } else if (tempC < 5) {
+        thermalFactor = 0.78 + (tempC - (-5)) * 0.01; // -22%
+        thermalLabel = `❄️ Froid Hivernal (${tempC}°C) : -22% d'autonomie`;
+      } else if (tempC < 15) {
+        thermalFactor = 0.88 + (tempC - 5) * 0.012; // -12%
+        thermalLabel = `⛅ Frais (${tempC}°C) : -10% d'autonomie`;
+      } else if (tempC <= 30) {
+        thermalFactor = 1.0;
+        thermalLabel = `☀️ Idéal (${tempC}°C) : 100% nominal`;
+      } else {
+        thermalFactor = 0.94; // Forte chaleur
+        thermalLabel = `🔥 Canicule (${tempC}°C) : risque d'échauffement`;
+      }
+
+      const totalWhUsed = Math.max(1, netMechanicalWh / thermalFactor);
+      const thermalLossWh = Math.round(totalWhUsed - netMechanicalWh);
+
+      const fullCapacityWh = cfg.batteryCapacityWh || 474;
+      const consumedPct = Math.min(100, Math.max(1, Math.round((totalWhUsed / fullCapacityWh) * 100)));
+      const remainingPct = Math.max(0, 100 - consumedPct);
+
+      // Temps estimé pour recharger les Wh dépensés sur prise 230V standard (chargeur ~350W)
+      const rechargeTimeMin = Math.max(5, Math.round((totalWhUsed / 350) * 60));
       const avgConsumptionPerKm = totalWhUsed / (distanceKm || 1);
-      const remainingRangeKm = (remainingWh / (avgConsumptionPerKm || 17)).toFixed(1);
+      const remainingRangeKm = ((remainingPct / 100) * fullCapacityWh / (avgConsumptionPerKm || 17)).toFixed(1);
 
       return {
+        consumedPct,
+        consumedWh: Math.round(totalWhUsed),
         whUsed: Math.round(totalWhUsed),
-        currentPct: cfg.currentPercentage,
+        flatWh: Math.round(flatEnergyWh),
+        climbWh: Math.round(climbEnergyWh),
+        regenWh: Math.round(regenEnergyWh),
+        tempC,
+        thermalFactor: Math.round(thermalFactor * 100),
+        thermalLossWh,
+        thermalLabel,
+        currentPct: 100,
         arrivalPct: remainingPct,
         remainingRangeKm: parseFloat(remainingRangeKm),
-        isCritical: remainingPct < 15,
-        elevationGainM: Math.round(elevationGainM)
+        rechargeTimeMin,
+        isCritical: consumedPct > 85,
+        elevationGainM: Math.round(elevationGainM),
+        elevationLossM: Math.round(elevationLossM)
       };
     }
   }
@@ -678,80 +722,188 @@
   }
 
   // =========================================================================
-  // 7. 230V Charging Stations Engine
+  // 7. 230V & IRVE Charging Stations Engine (Vraies Bornes Réelles & Overpass API)
   // =========================================================================
+  const REAL_IRVE_STATIONS_CATALOG = [
+    // Paris / IDF (Belib, TotalEnergies, Izivia, Electra, Tesla)
+    { id: 'irve_p1', name: 'Belib\' - Hôtel de Ville / Rivoli', lat: 48.8566, lng: 2.3522, operator: 'Belib\' Métropole', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard 16A', address: 'Place de l\'Hôtel de Ville, 75004 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    { id: 'irve_p2', name: 'Belib\' - Bastille / Boulevard Richard Lenoir', lat: 48.8540, lng: 2.3705, operator: 'Belib\'', power: '22 kW', connectors: 'Type 2 AC • Prise 230V E/F', address: 'Boulevard Richard Lenoir, 75011 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    { id: 'irve_p3', name: 'TotalEnergies - Relais République', lat: 48.8672, lng: 2.3635, operator: 'TotalEnergies', power: '50 kW', connectors: 'Combo CCS • Type 2 • Prise 230V 16A', address: 'Place de la République, 75003 Paris', access: 'Station service 24h/24', fee: 'Payant TotalEnergies' },
+    { id: 'irve_p4', name: 'Belib\' - Gare de Lyon / Diderot', lat: 48.8448, lng: 2.3735, operator: 'Belib\'', power: '22 kW', connectors: 'Type 2 AC • Prise 230V 16A E/F', address: 'Boulevard Diderot, 75012 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    { id: 'irve_p5', name: 'Izivia - Châtelet / Les Halles', lat: 48.8615, lng: 2.3470, operator: 'Izivia Grand Paris', power: '22 kW', connectors: 'Type 2 AC • Prise 230V 16A', address: 'Rue Berger / Les Halles, 75001 Paris', access: 'Public 24h/24', fee: 'Payant Izivia' },
+    { id: 'irve_p6', name: 'Belib\' - Opéra / Boulevard des Capucines', lat: 48.8705, lng: 2.3320, operator: 'Belib\'', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Boulevard des Capucines, 75009 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    { id: 'irve_p7', name: 'Belib\' - Montparnasse / Vaugirard', lat: 48.8420, lng: 2.3215, operator: 'Belib\'', power: '22 kW', connectors: 'Type 2 AC • Prise 230V 16A E/F', address: 'Boulevard de Vaugirard, 75015 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    { id: 'irve_p8', name: 'Belib\' - Nation / Cours de Vincennes', lat: 48.8480, lng: 2.3970, operator: 'Belib\'', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Cours de Vincennes, 75012 Paris', access: 'Public 24h/24', fee: 'Payant Belib\'' },
+    
+    // Lyon Métropole
+    { id: 'irve_ly1', name: 'IZIVIA Grand Lyon - Bellecour', lat: 45.7578, lng: 4.8320, operator: 'Grand Lyon', power: '22 kW', connectors: 'Type 2 AC • Prise 230V 16A E/F', address: 'Place Bellecour, 69002 Lyon', access: 'Public 24h/24', fee: 'Payant Izivia' },
+    { id: 'irve_ly2', name: 'Borne Métropole - Part-Dieu / Vivier Merle', lat: 45.7605, lng: 4.8600, operator: 'Métropole de Lyon', power: '22 kW', connectors: 'Type 2 AC • Prise 230V', address: 'Boulevard Vivier Merle, 69003 Lyon', access: 'Public 24h/24', fee: 'Payant Métropole' },
+    
+    // Bordeaux Métropole
+    { id: 'irve_bd1', name: 'Bordeaux Métropole - Place de la Bourse / Quais', lat: 44.8415, lng: -0.5695, operator: 'Bordeaux Métropole', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Quai Richelieu, 33000 Bordeaux', access: 'Public 24h/24', fee: 'Payant' },
+    
+    // Toulouse Métropole
+    { id: 'irve_tl1', name: 'Toulouse Métropole - Capitole / Alsace Lorraine', lat: 43.6045, lng: 1.4440, operator: 'Toulouse Métropole', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Rue d\'Alsace Lorraine, 31000 Toulouse', access: 'Public 24h/24', fee: 'Payant' },
+    
+    // Nantes / Strasbourg / Nice / Lille
+    { id: 'irve_na1', name: 'Nantes Métropole - Commerce / 50 Otages', lat: 47.2140, lng: -1.5580, operator: 'Nantes Métropole', power: '22 kW', connectors: 'Type 2 AC • Prise 230V 16A', address: 'Cours des 50 Otages, 44000 Nantes', access: 'Public 24h/24', fee: 'Payant' },
+    { id: 'irve_st1', name: 'Strasbourg Eurométropole - Place Kléber', lat: 48.5835, lng: 7.7455, operator: 'Strasbourg Métropole', power: '22 kW', connectors: 'Type 2 AC • Prise 230V E/F', address: 'Place Kléber, 67000 Strasbourg', access: 'Public 24h/24', fee: 'Payant' },
+    { id: 'irve_nc1', name: 'Nice Côte d\'Azur - Promenade des Anglais', lat: 43.6950, lng: 7.2680, operator: 'Prise de Nice', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Promenade des Anglais, 06000 Nice', access: 'Public 24h/24', fee: 'Payant' },
+    { id: 'irve_ll1', name: 'Lille Métropole - Grand Place / Opéra', lat: 50.6370, lng: 3.0640, operator: 'MEL Lille', power: '22 kW', connectors: 'Type 2 AC • Prise 230V standard', address: 'Place du Théâtre, 59000 Lille', access: 'Public 24h/24', fee: 'Payant' }
+  ];
+
   class ChargingStationsManager {
     constructor(mapManager, onNavigateToStation) {
       this.mapManager = mapManager;
       this.onNavigateToStation = onNavigateToStation;
-      this.stations = [
-        {
-          id: 'ch_1',
-          name: 'Station Belib\' - Prise Domestique 230V E/F',
-          lat: 48.8570, lng: 2.3530,
-          plug: 'Prise domestique 230V 16A standard (Type E/F)',
-          access: 'Borne publique Belib\' • 24h/24',
-          desc: 'Prise 230V normale disponible sur le côté de la borne auto. Compatible chargeur trottinette.'
-        },
-        {
-          id: 'ch_2',
-          name: 'Point Relais TrottiCharge 230V - Bastille',
-          lat: 48.8528, lng: 2.3685,
-          plug: '2x Prises 230V en accès libre',
-          access: 'Café vélo & Atelier • Ouvert 8h-20h',
-          desc: 'Recharge gratuite pour les trottinettes et vélos. Pompe et outils à disposition.'
-        },
-        {
-          id: 'ch_3',
-          name: 'Borne de Recharge Municipale 230V - République',
-          lat: 48.8680, lng: 2.3640,
-          plug: 'Prise 230V 16A protégée',
-          access: 'Espace public • 24h/24',
-          desc: 'Prise 230V située au niveau de la station vélos sécurisée.'
-        },
-        {
-          id: 'ch_4',
-          name: 'Borne Auto & 2RM 230V - Gare de Lyon',
-          lat: 48.8455, lng: 2.3725,
-          plug: 'Prise standard 230V 16A',
-          access: 'Parvis gare • 24h/24',
-          desc: 'Borne de recharge avec prise domestique pour deux-roues électriques.'
-        },
-        {
-          id: 'ch_5',
-          name: 'Station TrottiCharge 230V - Châtelet Les Halles',
-          lat: 48.8605, lng: 2.3480,
-          plug: '3x Prises 230V 16A',
-          access: 'Sortie Forum des Halles • 24h/24',
-          desc: 'Prises 230V sous abri avec casiers de recharge.'
-        }
-      ];
+      this.stations = [...REAL_IRVE_STATIONS_CATALOG];
       this.markers = [];
       this.isVisible = true;
+      this.lastQueryCoords = null;
+      this.isLoading = false;
     }
 
-    generateNearbyStations(centerLat, centerLng) {
-      const offsets = [
-        { dLat: 0.0035, dLng: 0.0042, name: 'Borne Auto avec Prise 230V 16A' },
-        { dLat: -0.0040, dLng: 0.0030, name: 'Station Vélo/Trotti Prise 230V' },
-        { dLat: 0.0020, dLng: -0.0050, name: 'Borne Publique Prise Domestique 230V' }
-      ];
+    async generateNearbyStations(centerLat, centerLng) {
+      return this.fetchRealEVStations(centerLat, centerLng);
+    }
 
-      offsets.forEach((o, i) => {
-        const id = `ch_dyn_${i}`;
-        if (!this.stations.find(s => s.id === id)) {
-          this.stations.push({
-            id,
-            name: o.name,
-            lat: centerLat + o.dLat,
-            lng: centerLng + o.dLng,
-            plug: 'Prise 230V 16A standard (Type E/F)',
-            access: 'Accès public 24h/24',
-            desc: 'Prise 230V utilisable avec votre chargeur secteur trottinette habituel.'
-          });
+    async fetchRealEVStations(centerLat, centerLng) {
+      if (!centerLat || !centerLng || isNaN(centerLat) || isNaN(centerLng)) return;
+
+      // Rate limit / deduplicate queries if user only moved slightly (< 1 km)
+      if (this.lastQueryCoords) {
+        const distKm = Math.hypot(this.lastQueryCoords.lat - centerLat, (this.lastQueryCoords.lng - centerLng) * Math.cos(centerLat * Math.PI / 180)) * 111;
+        if (distKm < 1.0 && this.stations.length > 0) return;
+      }
+      this.lastQueryCoords = { lat: centerLat, lng: centerLng };
+
+      this.isLoading = true;
+      let fetchedStations = [];
+
+      // 1. Primary Live Source: OpenStreetMap Overpass API (Worldwide real EV charging stations)
+      try {
+        const bboxRadiusM = 6500;
+        const overpassQuery = `[out:json][timeout:8];(node["amenity"="charging_station"](around:${bboxRadiusM},${centerLat},${centerLng});way["amenity"="charging_station"](around:${bboxRadiusM},${centerLat},${centerLng}););out center 40;`;
+        const overpassUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(overpassQuery)}`;
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 6500);
+
+        const res = await fetch(overpassUrl, { signal: controller.signal });
+        clearTimeout(timeoutId);
+
+        if (res.ok) {
+          const json = await res.json();
+          if (json && json.elements && json.elements.length > 0) {
+            fetchedStations = json.elements.map(el => {
+              const tags = el.tags || {};
+              const lat = el.lat || (el.center && el.center.lat);
+              const lng = el.lon || (el.center && el.center.lon);
+              if (!lat || !lng) return null;
+
+              const operator = tags.operator || tags.brand || tags.network || tags.owner || 'Borne Voiture Électrique';
+              let stationName = tags.name;
+              if (!stationName) {
+                const street = tags['addr:street'] || tags['addr:city'] || '';
+                stationName = street ? `${operator} - ${street}` : `Station ${operator}`;
+              }
+
+              const capacity = tags.capacity ? `${tags.capacity} points de charge` : 'Borne de recharge voiture';
+              const power = tags.maxpower ? `${tags.maxpower} kW` : (tags['socket:combo_ccs:output'] || tags['socket:type2:output'] || 'Jusqu\'à 22-150 kW');
+
+              const connectors = [];
+              if (tags['socket:combo_ccs'] || tags['socket:combo_ccs:output']) connectors.push('Combo CCS (DC)');
+              if (tags['socket:type2'] || tags['socket:type2:output'] || tags['socket:type2_cable']) connectors.push('Type 2 AC');
+              if (tags['socket:domestic'] === 'yes' || tags['socket:type_e'] === 'yes') connectors.push('Prise 230V 16A (E/F)');
+              if (tags['socket:chademo']) connectors.push('CHAdeMO');
+              if (connectors.length === 0) connectors.push('Type 2 / Prise 230V');
+
+              let address = '';
+              if (tags['addr:street']) {
+                address = `${tags['addr:housenumber'] || ''} ${tags['addr:street']}, ${tags['addr:city'] || ''}`.trim();
+              }
+
+              return {
+                id: 'osm_irve_' + el.id,
+                name: stationName,
+                operator: operator,
+                lat: lat,
+                lng: lng,
+                power: power,
+                capacity: capacity,
+                connectors: connectors.join(' • '),
+                address: address,
+                access: tags.opening_hours || tags.access || 'Public 24h/24',
+                fee: tags.fee === 'no' ? 'Gratuit' : (tags.fee === 'yes' ? 'Payant' : 'Tarif selon réseau')
+              };
+            }).filter(Boolean);
+          }
         }
-      });
-      this.render();
+      } catch (e) {
+        console.warn('Overpass EV charging stations lookup notice:', e);
+      }
+
+      // 2. Secondary Live Source: French Official OpenDataSoft IRVE API (data.gouv.fr)
+      if (fetchedStations.length === 0) {
+        try {
+          const odsUrl = `https://public.opendatasoft.com/api/explore/v2.1/catalog/datasets/fichier-consolide-des-bornes-de-recharge-pour-vehicules-electriques-irve/records?where=within_distance(geo_point_borne,%20geom'POINT(${centerLng}%20${centerLat})',%208km)&limit=35`;
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 6000);
+          const odsRes = await fetch(odsUrl, { signal: controller.signal });
+          clearTimeout(timeoutId);
+
+          if (odsRes.ok) {
+            const odsData = await odsRes.json();
+            if (odsData && odsData.results && odsData.results.length > 0) {
+              fetchedStations = odsData.results.map((r, idx) => {
+                const lat = r.geo_point_borne ? r.geo_point_borne.lat : (r.coordonneesXY ? r.coordonneesXY[1] : null);
+                const lng = r.geo_point_borne ? r.geo_point_borne.lon : (r.coordonneesXY ? r.coordonneesXY[0] : null);
+                if (!lat || !lng) return null;
+
+                const operator = r.nom_enseigne || r.nom_operateur || r.nom_amenageur || 'Réseau IRVE';
+                const name = r.nom_station || r.n_station || `${operator} - Borne Voiture`;
+                const power = r.puissance_nominale ? `${r.puissance_nominale} kW` : (r.puiss_max ? `${r.puiss_max} kW` : '22 kW');
+
+                const connectors = [];
+                if (r.prise_type_2) connectors.push('Type 2');
+                if (r.prise_type_combo_ccs) connectors.push('Combo CCS');
+                if (r.prise_type_ef) connectors.push('Prise 230V E/F');
+                if (connectors.length === 0) connectors.push('Prise Type 2 / 230V');
+
+                return {
+                  id: 'ods_irve_' + (r.id_station_itinerance || idx),
+                  name: name,
+                  operator: operator,
+                  lat: lat,
+                  lng: lng,
+                  power: power,
+                  capacity: r.nbre_pdc ? `${r.nbre_pdc} points de charge` : 'Station de recharge',
+                  connectors: connectors.join(' • '),
+                  address: r.adresse_station || r.ad_station || '',
+                  access: r.condition_acces || r.horaires || 'Public 24h/24',
+                  fee: r.tarification || 'Tarif selon réseau'
+                };
+              }).filter(Boolean);
+            }
+          }
+        } catch (e) {
+          console.warn('OpenDataSoft IRVE lookup notice:', e);
+        }
+      }
+
+      this.isLoading = false;
+
+      // Merge real stations avoiding duplicates (strictly no fake offsets!)
+      if (fetchedStations.length > 0) {
+        fetchedStations.forEach(ns => {
+          const exists = this.stations.find(s => Math.hypot(s.lat - ns.lat, s.lng - ns.lng) < 0.0003 || s.id === ns.id);
+          if (!exists) {
+            this.stations.unshift(ns);
+          }
+        });
+        if (this.stations.length > 80) this.stations.length = 80;
+        this.render();
+      }
     }
 
     render() {
@@ -761,19 +913,25 @@
       this.stations.forEach(st => {
         const icon = L.divIcon({
           className: 'charging-marker-icon',
-          html: `<div title="${st.name}" style="color:#facc15; font-size:15px; font-weight:800;">⚡</div>`,
-          iconSize: [28, 28],
-          iconAnchor: [14, 14]
+          html: `<div class="charge-bubble-pin" title="${st.name}"><span class="charge-bubble-glow"></span><span class="charge-icon-sym">⚡</span></div>`,
+          iconSize: [32, 32],
+          iconAnchor: [16, 16]
         });
 
         const marker = L.marker([st.lat, st.lng], { icon }).addTo(this.mapManager.map);
         
         const popupContent = `
           <div class="charging-popup-card">
-            <div class="charge-popup-title">⚡ ${st.name}</div>
-            <div class="charge-popup-plug">🔌 ${st.plug}</div>
-            <div class="charge-popup-desc">${st.desc}<br><small>🕒 ${st.access}</small></div>
-            <button class="btn-charge-route" id="btn-goto-charge-${st.id}">🚀 Y aller (Itinéraire)</button>
+            <div class="charge-popup-header">
+              <span class="charge-popup-tag">🚗⚡ RECHARGE VOITURE (IRVE)</span>
+              <span class="charge-popup-power">${st.power || '22 kW'}</span>
+            </div>
+            <div class="charge-popup-title">${st.name}</div>
+            <div class="charge-popup-operator">🏢 Opérateur : <strong>${st.operator || 'Réseau IRVE'}</strong></div>
+            <div class="charge-popup-plug">🔌 Connecteurs : <strong>${st.connectors || 'Type 2 / 230V'}</strong></div>
+            ${st.address ? `<div class="charge-popup-addr">📍 ${st.address}</div>` : ''}
+            <div class="charge-popup-desc">🕒 ${st.access || '24h/24'} • 💳 ${st.fee || 'Tarif opérateur'}</div>
+            <button class="btn-charge-route" id="btn-goto-charge-${st.id}">🚀 Y aller en trottinette</button>
           </div>
         `;
         marker.bindPopup(popupContent);
@@ -829,10 +987,7 @@
   class HistoryManager {
     constructor() {
       this.recents = [];
-      this.favorites = {
-        home: { name: 'Domicile', full: '12 Rue de Rivoli, 75004 Paris', lat: 48.8556, lng: 2.3558, type: 'fav' },
-        work: { name: 'Travail', full: 'Place de la République, 75011 Paris', lat: 48.8675, lng: 2.3638, type: 'fav' }
-      };
+      this.favorites = {};
       this.load();
     }
 
@@ -841,7 +996,7 @@
         const r = localStorage.getItem('trottiwaze_recents_v2');
         if (r) this.recents = JSON.parse(r);
         const f = localStorage.getItem('trottiwaze_favs_v2');
-        if (f) this.favorites = { ...this.favorites, ...JSON.parse(f) };
+        if (f) this.favorites = JSON.parse(f);
       } catch (e) {}
     }
 
@@ -870,6 +1025,11 @@
 
     getFavorite(key) {
       return this.favorites[key] || null;
+    }
+
+    setFavorite(key, item) {
+      this.favorites[key] = item;
+      this.save();
     }
   }
 
@@ -1070,6 +1230,136 @@
           avgSpeedKmh: avgSpeed,
           maxSpeedKmh: this.maxSpeedKmh.toFixed(1)
         });
+      }
+    }
+  } // ← end RideRecorder
+
+  // =========================================================================
+  // 9b. Parking & Where is My Scooter Manager
+  // =========================================================================
+  class ParkingManager {
+    constructor(mapManager, app) {
+      this.mapManager = mapManager;
+      this.app = app;
+      this.parkedLocation = null;
+      this.parkingMarker = null;
+      this.load();
+    }
+
+    load() {
+      try {
+        const raw = localStorage.getItem('trottiwaze_parked_scooter');
+        if (raw) {
+          this.parkedLocation = JSON.parse(raw);
+        }
+      } catch (e) {}
+    }
+
+    save() {
+      try {
+        if (this.parkedLocation) {
+          localStorage.setItem('trottiwaze_parked_scooter', JSON.stringify(this.parkedLocation));
+        } else {
+          localStorage.removeItem('trottiwaze_parked_scooter');
+        }
+      } catch (e) {}
+    }
+
+    parkHere(lat, lng, note = '') {
+      const active = this.app.garageManager.getActiveScooter();
+      this.parkedLocation = {
+        lat,
+        lng,
+        note: note.trim() || 'Arceau / Stationnement trottinette',
+        vehicleName: active.name || 'Mon Véhicule',
+        vehicleIcon: active.icon || '🛴',
+        timestamp: Date.now(),
+        dateFormatted: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit' })
+      };
+      this.save();
+      this.renderMarker();
+      this.updateBanner();
+      this.app.showToast('🅿️ Emplacement trottinette mémorisé !');
+    }
+
+    clearParking() {
+      this.parkedLocation = null;
+      this.save();
+      if (this.parkingMarker && this.mapManager && this.mapManager.map) {
+        this.mapManager.map.removeLayer(this.parkingMarker);
+        this.parkingMarker = null;
+      }
+      this.updateBanner();
+      this.app.showToast('🔓 Trottinette récupérée');
+    }
+
+    renderMarker() {
+      if (!this.parkedLocation || !this.mapManager || !this.mapManager.map) return;
+      if (this.parkingMarker) {
+        this.mapManager.map.removeLayer(this.parkingMarker);
+        this.parkingMarker = null;
+      }
+
+      const icon = L.divIcon({
+        className: 'parking-marker-leaflet',
+        html: `
+          <div class="parked-pin-container">
+            <div class="parked-pin-pulse"></div>
+            <div class="parked-pin-icon">🅿️</div>
+          </div>
+        `,
+        iconSize: [44, 44],
+        iconAnchor: [22, 22]
+      });
+
+      this.parkingMarker = L.marker([this.parkedLocation.lat, this.parkedLocation.lng], { icon, zIndexOffset: 950 }).addTo(this.mapManager.map);
+      
+      const popupHtml = `
+        <div class="parking-popup-card">
+          <div class="parking-popup-badge">🅿️ TROTTINETTE GARÉE</div>
+          <div class="parking-popup-title">${this.parkedLocation.vehicleIcon} ${this.parkedLocation.vehicleName}</div>
+          <div class="parking-popup-time">🕒 Garée à ${this.parkedLocation.dateFormatted}</div>
+          ${this.parkedLocation.note ? `<div class="parking-popup-note">📝 ${this.parkedLocation.note}</div>` : ''}
+          <div class="parking-popup-actions">
+            <button class="btn-micro" id="btn-popup-walk-to-scooter">🚶 Retrouver à pied</button>
+            <button class="btn-micro danger" id="btn-popup-unpark">🔓 Récupérer</button>
+          </div>
+        </div>
+      `;
+      this.parkingMarker.bindPopup(popupHtml);
+      this.parkingMarker.on('popupopen', () => {
+        const btnWalk = document.getElementById('btn-popup-walk-to-scooter');
+        if (btnWalk) btnWalk.addEventListener('click', () => {
+          this.parkingMarker.closePopup();
+          this.navigateToParkedScooter();
+        });
+        const btnUnpark = document.getElementById('btn-popup-unpark');
+        if (btnUnpark) btnUnpark.addEventListener('click', () => {
+          this.parkingMarker.closePopup();
+          this.clearParking();
+        });
+      });
+    }
+
+    navigateToParkedScooter() {
+      if (!this.parkedLocation) return;
+      this.app.selectedEndCoords = { lat: this.parkedLocation.lat, lng: this.parkedLocation.lng };
+      this.app.elEndInput.value = `🅿️ Ma trottinette (${this.parkedLocation.vehicleName})`;
+      this.app.calculateCurrentRoute();
+      this.app.showToast('🚶 Itinéraire piéton vers votre trottinette');
+    }
+
+    updateBanner() {
+      const banner = document.getElementById('parked-scooter-floating-banner');
+      if (!banner) return;
+      if (this.parkedLocation) {
+        banner.style.display = 'flex';
+        const txt = document.getElementById('parked-banner-text');
+        const minAgo = Math.max(0, Math.floor((Date.now() - this.parkedLocation.timestamp) / 60000));
+        const timeStr = minAgo < 1 ? 'à l\'instant' : `il y a ${minAgo} min`;
+        if (txt) txt.innerHTML = `<strong>${this.parkedLocation.vehicleIcon} Garée ${timeStr}</strong> • ${this.parkedLocation.note}`;
+      } else {
+        banner.style.display = 'none';
       }
     }
   }
@@ -1434,7 +1724,7 @@
       this.liveRecordPolyline = null;
       this.pastRidePolyline = null;
       this.verifiedTracksGroup = null;
-      this.currentLayerId = 'osm';
+      this.currentLayerId = 'waze';
       this.isAutoFollowing = true;
       this.defaultCenter = [48.8531, 2.3698];
       this.currentLocation = { lat: 48.8531, lng: 2.3698, heading: 90, speed: 0 };
@@ -1454,7 +1744,7 @@
       });
 
       L.control.attribution({ position: 'bottomleft' })
-        .addAttribution('&copy; <a href="https://www.openstreetmap.org">OSM</a> | &copy; CyclOSM | &copy; IGN | &copy; Esri')
+        .addAttribution('&copy; <a href="https://www.openstreetmap.org">OSM</a> | &copy; CartoDB | &copy; CyclOSM | &copy; Esri')
         .addTo(this.map);
       L.control.zoom({ position: 'topleft' }).addTo(this.map);
 
@@ -1462,14 +1752,15 @@
         this.setAutoFollow(false);
       });
 
-      const tileOpts = { maxZoom: 19, crossOrigin: true };
+      const tileOpts = { maxZoom: 20, crossOrigin: true };
 
       this.tileLayers = {
+        waze: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { ...tileOpts, subdomains: 'abcd', maxZoom: 20 }),
         osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { ...tileOpts, maxZoom: 19 }),
         cyclosm: L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 20 }),
         streets: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
-        osmfr: L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 20 }),
-        ign: L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', { ...tileOpts, maxZoom: 19, attribution: '&copy; IGN' }),
+        opentopo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { ...tileOpts, maxZoom: 17 }),
+        ign: L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', { ...tileOpts, maxZoom: 19 }),
         satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
         night: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { ...tileOpts, subdomains: 'abcd', maxZoom: 19 })
       };
@@ -1483,13 +1774,24 @@
       });
       this.isVerifiedCyclewaysEnabled = true;
 
-      this.tileLayers.osm.addTo(this.map);
+      this.tileLayers.waze.addTo(this.map);
       this.cyclewaysOverlay.addTo(this.map); // Active by default for verified bike lanes
       
       // Initialize Vector High-Visibility Layer for Guaranteed Certified Cycle Corridors
       this.initVerifiedCyclewaysVectorLayer();
 
       this.createScooterMarker(this.defaultCenter[0], this.defaultCenter[1]);
+
+      let moveDebounceTimer = null;
+      this.map.on('moveend', () => {
+        if (moveDebounceTimer) clearTimeout(moveDebounceTimer);
+        moveDebounceTimer = setTimeout(() => {
+          if (this.map && this.onMapMoveCenter) {
+            const center = this.map.getCenter();
+            this.onMapMoveCenter(center.lat, center.lng);
+          }
+        }, 900);
+      });
 
       window.addEventListener('resize', () => this.map.invalidateSize());
       window.addEventListener('orientationchange', () => setTimeout(() => this.map.invalidateSize(), 200));
@@ -1556,59 +1858,53 @@
       }
     }
 
-    setVerifiedCyclewaysVisible(enabled) {
-      this.isVerifiedCyclewaysEnabled = enabled;
-      if (enabled) {
-        if (!this.map.hasLayer(this.cyclewaysOverlay)) {
-          this.cyclewaysOverlay.addTo(this.map);
-        }
-        if (this.verifiedTracksGroup && !this.map.hasLayer(this.verifiedTracksGroup)) {
-          this.verifiedTracksGroup.addTo(this.map);
-        }
+    setVerifiedCyclewaysVisible(visible) {
+      this.isVerifiedCyclewaysEnabled = visible;
+      if (visible) {
+        if (this.cyclewaysOverlay) this.cyclewaysOverlay.addTo(this.map);
+        if (this.verifiedTracksGroup) this.verifiedTracksGroup.addTo(this.map);
       } else {
-        if (this.map.hasLayer(this.cyclewaysOverlay)) {
-          this.map.removeLayer(this.cyclewaysOverlay);
-        }
-        if (this.verifiedTracksGroup && this.map.hasLayer(this.verifiedTracksGroup)) {
-          this.map.removeLayer(this.verifiedTracksGroup);
-        }
+        if (this.cyclewaysOverlay) this.map.removeLayer(this.cyclewaysOverlay);
+        if (this.verifiedTracksGroup) this.map.removeLayer(this.verifiedTracksGroup);
       }
-      this.map.invalidateSize();
     }
 
     zoomToCycleway(trackId) {
       const track = VERIFIED_CYCLEWAYS_CATALOG.find(t => t.id === trackId);
-      if (!track || !this.map || !track.coords) return;
-      const poly = L.polyline(track.coords);
-      this.map.fitBounds(poly.getBounds(), { padding: [60, 60], maxZoom: 16 });
-      this.setAutoFollow(false);
+      if (track && track.coords && track.coords.length > 0) {
+        const bounds = L.latLngBounds(track.coords);
+        this.map.fitBounds(bounds, { padding: [60, 60], maxZoom: 16 });
+      }
     }
 
     setTileLayer(layerId) {
-      if (!this.tileLayers[layerId]) return 'OpenStreetMap Standard';
-      if (this.currentLayerId && this.tileLayers[this.currentLayerId]) {
-        this.map.removeLayer(this.tileLayers[this.currentLayerId]);
-      }
-      this.currentLayerId = layerId;
-      this.tileLayers[layerId].addTo(this.map);
+      if (!this.tileLayers[layerId]) return;
 
-      // Keep cycleways overlay on top if not using cyclosm base
-      if (this.isVerifiedCyclewaysEnabled && layerId !== 'cyclosm') {
-        if (!this.map.hasLayer(this.cyclewaysOverlay)) {
-          this.cyclewaysOverlay.addTo(this.map);
+      Object.keys(this.tileLayers).forEach(k => {
+        if (this.map.hasLayer(this.tileLayers[k])) {
+          this.map.removeLayer(this.tileLayers[k]);
         }
-      } else if (layerId === 'cyclosm' && this.map.hasLayer(this.cyclewaysOverlay)) {
-        this.map.removeLayer(this.cyclewaysOverlay);
+      });
+
+      this.tileLayers[layerId].addTo(this.map);
+      this.currentLayerId = layerId;
+
+      if (this.isVerifiedCyclewaysEnabled && this.cyclewaysOverlay) {
+        this.cyclewaysOverlay.bringToFront();
+      }
+      if (this.isVerifiedCyclewaysEnabled && this.verifiedTracksGroup) {
+        this.verifiedTracksGroup.bringToFront();
       }
 
       this.map.invalidateSize();
 
       const names = {
+        waze: 'Style Waze Cartoon HD (Carto)',
         osm: 'OpenStreetMap Standard',
-        cyclosm: 'CyclOSM France',
-        streets: 'Style Urbain GPS (Esri)',
-        osmfr: 'OpenStreetMap France',
-        ign: 'Plan IGN Géoportail',
+        cyclosm: 'CyclOSM Pistes Cyclables',
+        streets: 'Style GPS Urbain (Esri)',
+        opentopo: 'OpenTopoMap Relief & Dénivelé HD',
+        ign: 'Plan IGN France Officiel (GEOPF)',
         satellite: 'Vue Satellite Réelle HD',
         night: 'Mode Nuit OLED'
       };
@@ -1624,8 +1920,8 @@
     createScooterMarker(lat, lng, iconChar = '🛴') {
       const icon = L.divIcon({
         className: 'scooter-leaflet-div',
-        html: `<div id="trotti-scooter-pin" class="scooter-marker-container"><div class="scooter-beam"></div><div class="scooter-icon-pin" id="scooter-icon-pin-inner">${iconChar}</div></div>`,
-        iconSize: [44, 44], iconAnchor: [22, 22]
+        html: `<div id="trotti-scooter-pin" class="scooter-marker-container"><div class="scooter-beam"></div><div class="scooter-icon-pin cartoon-waze-pin" id="scooter-icon-pin-inner">${iconChar}</div></div>`,
+        iconSize: [46, 46], iconAnchor: [23, 23]
       });
       this.scooterMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(this.map);
     }
@@ -1703,17 +1999,21 @@
       this.clearRoute();
       if (!coordinates || coordinates.length === 0) return;
       const colors = {
-        safe: ['rgba(16,185,129,0.4)', '#10b981'],
-        fast: ['rgba(14,165,233,0.4)', '#0ea5e9'],
-        eco: ['rgba(234,179,8,0.4)', '#eab308'],
-        nature: ['rgba(5,150,105,0.4)', '#059669']
+        safe: ['rgba(16,185,129,0.35)', '#10b981'],
+        fast: ['rgba(14,165,233,0.35)', '#0ea5e9'],
+        eco: ['rgba(234,179,8,0.35)', '#eab308'],
+        nature: ['rgba(5,150,105,0.35)', '#059669']
       };
       const [glowColor, strokeColor] = colors[mode] || colors.safe;
 
-      const glowLine = L.polyline(coordinates, { color: glowColor, weight: 10, opacity: 0.8 }).addTo(this.map);
-      const mainLine = L.polyline(coordinates, { color: strokeColor, weight: 5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
+      // Soft glow aura
+      const glowLine = L.polyline(coordinates, { color: glowColor, weight: 14, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
+      // Dark / contrast casing line for cartoon clarity
+      const casingLine = L.polyline(coordinates, { color: 'rgba(15, 23, 42, 0.75)', weight: 8, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
+      // Vivid candy center line
+      const mainLine = L.polyline(coordinates, { color: strokeColor, weight: 5.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
 
-      this.routePolylines.push(glowLine, mainLine);
+      this.routePolylines.push(glowLine, casingLine, mainLine);
       this.map.fitBounds(mainLine.getBounds(), { padding: [50, 50], maxZoom: 16 });
     }
 
@@ -2200,44 +2500,268 @@
       return h;
     }
 
-    playCockpitBell() {
+  // =========================================================================
+  // 14. WebAudio Horn Synthesizer (Clochette, Klaxon Waze, Alerte Urgence)
+  // =========================================================================
+  class HornAudioSynthesizer {
+    constructor() {
+      this.ctx = null;
+    }
+
+    init() {
+      if (!this.ctx) {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (AudioCtx) this.ctx = new AudioCtx();
+      }
+      if (this.ctx && this.ctx.state === 'suspended') {
+        this.ctx.resume();
+      }
+    }
+
+    playDingDong() {
+      this.init();
+      if (!this.ctx) return;
       try {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)();
-        const osc = ctx.createOscillator();
-        const gain = ctx.createGain();
-        osc.type = 'sine';
-        osc.frequency.setValueAtTime(1760, ctx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.35);
-        gain.gain.setValueAtTime(0.4, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+        const now = this.ctx.currentTime;
+        // Chime 1
+        const osc1 = this.ctx.createOscillator();
+        const gain1 = this.ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(2093, now); // C7
+        osc1.frequency.exponentialRampToValueAtTime(1046, now + 0.3);
+        gain1.gain.setValueAtTime(0.5, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.35);
+        osc1.connect(gain1);
+        gain1.connect(this.ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.35);
+
+        // Chime 2
+        const osc2 = this.ctx.createOscillator();
+        const gain2 = this.ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(1567, now + 0.12); // G6
+        osc2.frequency.exponentialRampToValueAtTime(783, now + 0.5);
+        gain2.gain.setValueAtTime(0.4, now + 0.12);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.55);
+        osc2.connect(gain2);
+        gain2.connect(this.ctx.destination);
+        osc2.start(now + 0.12);
+        osc2.stop(now + 0.55);
+      } catch (e) {}
+    }
+
+    playWazeBip() {
+      this.init();
+      if (!this.ctx) return;
+      try {
+        const now = this.ctx.currentTime;
+        [0, 0.11].forEach((offset, idx) => {
+          const osc = this.ctx.createOscillator();
+          const gain = this.ctx.createGain();
+          osc.type = 'triangle';
+          osc.frequency.setValueAtTime(idx === 0 ? 587.33 : 880, now + offset);
+          gain.gain.setValueAtTime(0.4, now + offset);
+          gain.gain.exponentialRampToValueAtTime(0.01, now + offset + 0.09);
+          osc.connect(gain);
+          gain.connect(this.ctx.destination);
+          osc.start(now + offset);
+          osc.stop(now + offset + 0.09);
+        });
+      } catch (e) {}
+    }
+
+    playHazardAlarm() {
+      this.init();
+      if (!this.ctx) return;
+      try {
+        const now = this.ctx.currentTime;
+        const osc = this.ctx.createOscillator();
+        const gain = this.ctx.createGain();
+        osc.type = 'sawtooth';
+        osc.frequency.setValueAtTime(1400, now);
+        osc.frequency.linearRampToValueAtTime(500, now + 0.18);
+        osc.frequency.linearRampToValueAtTime(1400, now + 0.36);
+        gain.gain.setValueAtTime(0.45, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.4);
         osc.connect(gain);
-        gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.35);
+        gain.connect(this.ctx.destination);
+        osc.start(now);
+        osc.stop(now + 0.4);
       } catch (e) {}
     }
   }
 
   // =========================================================================
-  // 14. Master TrottiWaze App Controller
+  // 15. Cockpit HUD Fullscreen Handlebar Manager (Mode Guidon OLED Pro)
+  // =========================================================================
+  class CockpitHUDManager {
+    constructor(app) {
+      this.app = app;
+      this.isOpen = false;
+      this.isMirror = false;
+      this.currentSpeed = 0;
+      this.currentSlopePct = 0;
+      this.initElements();
+      this.initEvents();
+      this.initSensors();
+    }
+
+    initElements() {
+      this.elOverlay = document.getElementById('cockpit-hud-overlay');
+      this.elSpeedVal = document.getElementById('cockpit-speed-val');
+      this.elPowerWatts = document.getElementById('cockpit-power-watts');
+      this.elPowerFill = document.getElementById('cockpit-power-meter-fill');
+      this.elSlopeVal = document.getElementById('cockpit-slope-val');
+      this.elSlopeSub = document.getElementById('cockpit-slope-sub');
+      this.elBattVal = document.getElementById('cockpit-batt-val');
+      this.elWhVal = document.getElementById('cockpit-wh-val');
+      this.elChronoVal = document.getElementById('cockpit-chrono-val');
+      this.elDistVal = document.getElementById('cockpit-dist-val');
+      this.elAvgSpeedVal = document.getElementById('cockpit-avg-speed-val');
+      this.elMaxSpeedSub = document.getElementById('cockpit-max-speed-sub');
+      this.elVehicleIcon = document.getElementById('cockpit-vehicle-icon');
+      this.elVehicleName = document.getElementById('cockpit-vehicle-name');
+      this.elSpeedLimitLabel = document.getElementById('cockpit-speed-limit-label');
+    }
+
+    initEvents() {
+      const btnOpen = document.getElementById('btn-open-cockpit-hud');
+      if (btnOpen) btnOpen.addEventListener('click', () => this.open());
+
+      const btnClose = document.getElementById('btn-close-cockpit-hud');
+      if (btnClose) btnClose.addEventListener('click', () => this.close());
+
+      const btnMirror = document.getElementById('btn-cockpit-mirror');
+      if (btnMirror) {
+        btnMirror.addEventListener('click', () => {
+          this.isMirror = !this.isMirror;
+          if (this.elOverlay) this.elOverlay.classList.toggle('mirror-mode', this.isMirror);
+          btnMirror.classList.toggle('active', this.isMirror);
+        });
+      }
+    }
+
+    initSensors() {
+      if (window.DeviceOrientationEvent) {
+        window.addEventListener('deviceorientation', (e) => {
+          if (!this.isOpen) return;
+          const pitch = e.beta;
+          if (pitch !== null && !isNaN(pitch)) {
+            const clamped = Math.max(-25, Math.min(25, pitch - 70));
+            const slope = Math.round(Math.tan(clamped * Math.PI / 180) * 100 * 10) / 10;
+            this.currentSlopePct = slope;
+            this.updateSlopeDisplay(slope);
+            this.updatePowerWatts();
+          }
+        });
+      }
+    }
+
+    open() {
+      this.isOpen = true;
+      if (this.elOverlay) this.elOverlay.style.display = 'flex';
+      this.syncVehicleInfo();
+      this.updateStats();
+      this.app.showToast('🎛️ Mode Cockpit Guidon Activé');
+    }
+
+    close() {
+      this.isOpen = false;
+      if (this.elOverlay) this.elOverlay.style.display = 'none';
+    }
+
+    syncVehicleInfo() {
+      const active = this.app.garageManager.getActiveScooter();
+      if (this.elVehicleIcon) this.elVehicleIcon.textContent = active.icon || '🛴';
+      if (this.elVehicleName) this.elVehicleName.textContent = (active.name || 'Mon Véhicule').toUpperCase();
+      if (this.elSpeedLimitLabel) this.elSpeedLimitLabel.textContent = `BRIDE : ${active.speedPrefKmh || 25} KM/H`;
+    }
+
+    updateSpeed(speedKmh) {
+      this.currentSpeed = Math.max(0, speedKmh);
+      if (this.elSpeedVal) this.elSpeedVal.textContent = Math.round(this.currentSpeed);
+      this.updatePowerWatts();
+      if (this.isOpen) this.updateStats();
+    }
+
+    updateSlopeDisplay(slopePct) {
+      if (this.elSlopeVal) {
+        const sign = slopePct > 0 ? '+' : '';
+        this.elSlopeVal.textContent = `${sign}${slopePct.toFixed(1)}%`;
+      }
+      if (this.elSlopeSub) {
+        if (slopePct > 5) this.elSlopeSub.textContent = 'Côte raide ⛰️';
+        else if (slopePct > 1.5) this.elSlopeSub.textContent = 'Montée douce 📈';
+        else if (slopePct < -3) this.elSlopeSub.textContent = 'Descente (KERS ⚡)';
+        else this.elSlopeSub.textContent = 'Terrain plat';
+      }
+    }
+
+    updatePowerWatts() {
+      const active = this.app.garageManager.getActiveScooter();
+      const totalMass = (active.riderWeightKg || 75) + (active.scooterWeightKg || 18);
+      const speedMs = (this.currentSpeed || 0) / 3.6;
+
+      if (speedMs < 0.2) {
+        if (this.elPowerWatts) this.elPowerWatts.textContent = '0 W';
+        if (this.elPowerFill) this.elPowerFill.style.width = '0%';
+        return;
+      }
+
+      const theta = Math.atan((this.currentSlopePct || 0) / 100);
+      const pGrav = totalMass * 9.81 * Math.sin(theta) * speedMs;
+      const pRoll = 0.015 * totalMass * 9.81 * speedMs;
+      const pAero = 0.5 * 1.2 * 0.35 * Math.pow(speedMs, 3);
+
+      const totalWatts = Math.round(Math.max(-150, pGrav + pRoll + pAero));
+      
+      if (this.elPowerWatts) {
+        this.elPowerWatts.textContent = totalWatts < 0 ? `⚡ KERS ${totalWatts} W` : `${totalWatts} W`;
+      }
+      if (this.elPowerFill) {
+        const pct = Math.min(100, Math.max(0, (totalWatts / (active.speedPrefKmh > 30 ? 1200 : 600)) * 100));
+        this.elPowerFill.style.width = `${pct}%`;
+      }
+    }
+
+    updateStats() {
+      const rec = this.app.rideRecorder;
+      if (this.elChronoVal) this.elChronoVal.textContent = rec.formatTime(rec.durationSec || 0);
+      if (this.elDistVal) this.elDistVal.textContent = `${(rec.distanceKm || 0).toFixed(2)} km`;
+      if (this.elAvgSpeedVal) this.elAvgSpeedVal.textContent = `${(rec.avgSpeedKmh || 0).toFixed(1)} km/h`;
+      if (this.elMaxSpeedSub) this.elMaxSpeedSub.textContent = `Max: ${(rec.maxSpeedKmh || 0).toFixed(1)} km/h`;
+
+      const active = this.app.garageManager.getActiveScooter();
+      const battEst = this.app.batteryEngine.estimateTrip(rec.distanceKm || 0, 5, 5);
+      if (this.elBattVal) this.elBattVal.textContent = `-${Math.round(battEst.consumedPct)}%`;
+      if (this.elWhVal) this.elWhVal.textContent = `⚡ ${Math.round(battEst.whUsed)} Wh`;
+    }
+  }
+
+  // =========================================================================
+  // 16. Master TrottiWaze App Controller
   // =========================================================================
   class TrottiWazeApp {
     constructor() {
       window.trottiApp = this;
+      this.weatherEngine = new WeatherEngine();
       this.authManager = new AuthManager();
       this.garageManager = new GarageManager(activeScooter => this.handleActiveScooterChanged(activeScooter));
-      this.batteryEngine = new BatteryEngine(this.garageManager);
-      this.weatherEngine = new WeatherEngine();
+      this.batteryEngine = new BatteryEngine(this.garageManager, this.weatherEngine);
       this.historyManager = new HistoryManager();
       this.mapManager = new MapManager('map');
       this.compassManager = new OrientationCompassManager(this.mapManager);
       this.voiceEngine = new VoiceGuidanceEngine();
+      this.hornSynth = new HornAudioSynthesizer();
       
+      this.parkingManager = new ParkingManager(this.mapManager, this);
       this.rideRecorder = new RideRecorder(stats => this.handleRideRecorderUpdate(stats));
       this.chargingManager = new ChargingStationsManager(this.mapManager, station => this.navigateToChargingStation(station));
       this.routingEngine = new RoutingEngine(this.batteryEngine);
       this.navigationEngine = new NavigationEngine(this.mapManager, this.batteryEngine, this.rideRecorder, this.voiceEngine, this.compassManager);
       this.hazardManager = new HazardManager(this.mapManager);
+      this.cockpitHUD = new CockpitHUDManager(this);
 
       this.selectedRouteMode = 'safe';
       this.calculatedRoutes = null;
@@ -2247,6 +2771,12 @@
       this.selectedScooterIcon = '🛴';
       this.currentCyclewayCityFilter = 'all';
 
+      this.mapManager.onMapMoveCenter = (lat, lng) => {
+        if (this.chargingManager && this.chargingManager.isVisible) {
+          this.chargingManager.fetchRealEVStations(lat, lng);
+        }
+      };
+
       this.cacheDOMElements();
       this.initEvents();
       this.initUserGPS();
@@ -2255,6 +2785,8 @@
       this.initVoiceUI();
       this.updateUserAuthUI();
       this.chargingManager.render();
+      this.parkingManager.renderMarker();
+      this.parkingManager.updateBanner();
     }
 
     cacheDOMElements() {
@@ -2366,8 +2898,35 @@
       container.innerHTML = '';
       const active = this.garageManager.getActiveScooter();
 
+      if (this.garageManager.scooters.length === 0) {
+        container.innerHTML = `
+          <div class="empty-garage-card">
+            <span class="empty-garage-icon">🛴</span>
+            <div class="empty-garage-title">Votre garage est vide</div>
+            <div class="empty-garage-desc">Ajoutez votre trottinette (batterie, vitesse, poids) pour calibrer précisément l'autonomie et le calcul d'énergie.</div>
+            <button type="button" class="btn-primary" id="btn-empty-add-scoot" style="margin-top: 12px; width: auto; padding: 8px 18px; display: inline-flex; align-items: center; gap: 6px;">
+              ➕ Ajouter ma première trottinette
+            </button>
+          </div>
+        `;
+        const btnEmpty = container.querySelector('#btn-empty-add-scoot');
+        if (btnEmpty) {
+          btnEmpty.addEventListener('click', () => this.openScooterDrawer(null));
+        }
+        this.updateHudWithActiveScooter(active);
+        return;
+      }
+
       this.garageManager.scooters.forEach(scoot => {
         const isActive = scoot.id === active.id;
+        const odo = parseFloat((scoot.odometerKm || 0).toFixed(1));
+        const kmSinceTire = parseFloat(Math.max(0, odo - (scoot.lastTireCheckKm || 0)).toFixed(1));
+        const kmSinceBrake = parseFloat(Math.max(0, odo - (scoot.lastBrakeCheckKm || 0)).toFixed(1));
+        const tirePercent = Math.min(100, Math.round((kmSinceTire / 150) * 100));
+        const brakePercent = Math.min(100, Math.round((kmSinceBrake / 500) * 100));
+        const tireAlert = kmSinceTire >= 150;
+        const brakeAlert = kmSinceBrake >= 500;
+
         const card = document.createElement('div');
         card.className = `scooter-fleet-card ${isActive ? 'active-scooter' : ''}`;
         card.innerHTML = `
@@ -2381,10 +2940,38 @@
           <div class="fleet-specs-tags">
             <span class="fleet-spec-tag">🔋 <strong>${scoot.batteryCapacityWh} Wh</strong></span>
             <span class="fleet-spec-tag">⚡ <strong>${scoot.speedPrefKmh} km/h</strong></span>
-            <span class="fleet-spec-tag">⚖️ <strong>${scoot.scooterWeightKg} kg</strong> (trotti)</span>
-            <span class="fleet-spec-tag">👤 <strong>${scoot.riderWeightKg} kg</strong> (rider)</span>
+            <span class="fleet-spec-tag">⚖️ <strong>${scoot.scooterWeightKg} kg</strong></span>
+            <span class="fleet-spec-tag">🛣️ <strong>${odo} km</strong> roulés</span>
             <span class="fleet-spec-tag">🔋 <strong>${scoot.currentPercentage}%</strong></span>
           </div>
+
+          <!-- Carnet d'Entretien & Anti-Crevaison -->
+          <div class="fleet-maintenance-box">
+            <div class="maint-header">
+              <span>🔧 Entretien & Pression (Odomètre : <strong>${odo} km</strong>)</span>
+            </div>
+            <div class="maint-row ${tireAlert ? 'maint-alert' : ''}">
+              <div class="maint-label-row">
+                <span>🛞 Pression pneus : <strong>${kmSinceTire} / 150 km</strong></span>
+                ${tireAlert ? '<span class="maint-badge-warn">⚠️ Vérifier !</span>' : '<span class="maint-badge-ok">OK</span>'}
+              </div>
+              <div class="maint-bar-track">
+                <div class="maint-bar-fill ${tireAlert ? 'danger' : ''}" style="width: ${tirePercent}%;"></div>
+              </div>
+              <button type="button" class="btn-micro btn-maint-tire" data-id="${scoot.id}">✅ Valider pression pneus (${odo} km)</button>
+            </div>
+            <div class="maint-row ${brakeAlert ? 'maint-alert' : ''}">
+              <div class="maint-label-row">
+                <span>🛑 Plaquettes de frein : <strong>${kmSinceBrake} / 500 km</strong></span>
+                ${brakeAlert ? '<span class="maint-badge-warn">⚠️ Contrôle requis</span>' : '<span class="maint-badge-ok">OK</span>'}
+              </div>
+              <div class="maint-bar-track">
+                <div class="maint-bar-fill ${brakeAlert ? 'danger' : ''}" style="width: ${brakePercent}%;"></div>
+              </div>
+              <button type="button" class="btn-micro btn-maint-brake" data-id="${scoot.id}">✅ Valider contrôle freins (${odo} km)</button>
+            </div>
+          </div>
+
           <div class="fleet-actions-row">
             ${!isActive ? `<button class="btn-micro green btn-activate-scooter" data-id="${scoot.id}">⚡ Choisir ce modèle</button>` : `<span style="font-size:11px; color:var(--primary); font-weight:700;">Modèle sélectionné</span>`}
             <div style="display:flex; gap:6px;">
@@ -2400,6 +2987,24 @@
             this.garageManager.setActiveScooter(scoot.id);
             this.renderGarageFleetUI();
             this.showToast(`🛴 Modèle actif : ${scoot.name}`);
+          });
+        }
+
+        const btnTire = card.querySelector('.btn-maint-tire');
+        if (btnTire) {
+          btnTire.addEventListener('click', () => {
+            this.garageManager.recordTireCheck(scoot.id);
+            this.renderGarageFleetUI();
+            this.showToast(`🛞 Pression des pneus validée pour "${scoot.name}"`);
+          });
+        }
+
+        const btnBrake = card.querySelector('.btn-maint-brake');
+        if (btnBrake) {
+          btnBrake.addEventListener('click', () => {
+            this.garageManager.recordBrakeCheck(scoot.id);
+            this.renderGarageFleetUI();
+            this.showToast(`🛑 Contrôle des freins validé pour "${scoot.name}"`);
           });
         }
 
@@ -2455,25 +3060,26 @@
         scootInp.value = scoot.scooterWeightKg;
         speedSlider.value = scoot.speedPrefKmh;
         valSpeed.textContent = `${scoot.speedPrefKmh} km/h`;
-        battSlider.value = scoot.currentPercentage;
-        valBatt.textContent = `${scoot.currentPercentage}%`;
+        battSlider.value = scoot.currentPercentage || 100;
+        valBatt.textContent = `${scoot.currentPercentage || 100}%`;
         this.selectedScooterIcon = scoot.icon || '🛴';
       } else {
-        title.textContent = '➕ Nouvelle Trottinette';
+        title.textContent = '➕ Nouveau Véhicule (Trotti, Gyroroue, VAE...)';
         editId.value = '';
         nameInp.value = '';
-        capInp.value = '550';
+        capInp.value = '474';
         riderInp.value = '75';
         scootInp.value = '18';
         speedSlider.value = '25';
         valSpeed.textContent = '25 km/h';
-        battSlider.value = '80';
-        valBatt.textContent = '80%';
+        battSlider.value = '100';
+        valBatt.textContent = '100%';
         this.selectedScooterIcon = '🛴';
       }
 
       document.querySelectorAll('.scooter-icon-choice').forEach(b => {
-        b.classList.toggle('active', b.getAttribute('data-icon') === this.selectedScooterIcon);
+        const iconKey = b.getAttribute('data-icon');
+        b.classList.toggle('active', iconKey === this.selectedScooterIcon);
       });
 
       drawer.style.display = 'block';
@@ -2490,8 +3096,9 @@
 
     updateHudWithActiveScooter(scoot) {
       if (this.elSpeedLimitBadge) this.elSpeedLimitBadge.textContent = scoot.speedPrefKmh || 25;
-      if (this.elBatteryPercent) this.elBatteryPercent.textContent = `${scoot.currentPercentage}%`;
-      if (this.elBatteryFill) this.elBatteryFill.style.width = `${scoot.currentPercentage}%`;
+      if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-0%`;
+      if (this.elBatteryArrival) this.elBatteryArrival.textContent = `⚡ Conso : 0 Wh`;
+      if (this.elBatteryFill) this.elBatteryFill.style.width = `15%`;
     }
 
     // =======================================================================
@@ -2694,8 +3301,12 @@
       const activeScoot = this.garageManager.getActiveScooter();
       const sumGarage = document.getElementById('acc-garage-summary');
       const badgeGarage = document.getElementById('acc-garage-badge');
-      if (sumGarage && activeScoot) {
-        sumGarage.textContent = `Actif : ${activeScoot.name} (${activeScoot.batteryCapacityWh} Wh • ${activeScoot.speedPrefKmh} km/h)`;
+      if (sumGarage) {
+        if (this.garageManager.scooters.length > 0 && activeScoot) {
+          sumGarage.textContent = `Actif : ${activeScoot.name} (${activeScoot.batteryCapacityWh} Wh • ${activeScoot.speedPrefKmh} km/h)`;
+        } else {
+          sumGarage.textContent = 'Aucune trottinette enregistrée (Garage vide)';
+        }
       }
       if (badgeGarage) {
         badgeGarage.textContent = `${this.garageManager.scooters.length} active`;
@@ -2788,7 +3399,30 @@
         btn.addEventListener('click', () => {
           document.querySelectorAll('.scooter-icon-choice').forEach(b => b.classList.remove('active'));
           btn.classList.add('active');
-          this.selectedScooterIcon = btn.getAttribute('data-icon');
+          const icon = btn.getAttribute('data-icon');
+          this.selectedScooterIcon = icon;
+
+          // If adding new vehicle, auto-fill with vehicle category preset
+          const editId = document.getElementById('edit-scooter-id').value;
+          if (!editId && VEHICLE_TYPES_PRESETS[icon]) {
+            const p = VEHICLE_TYPES_PRESETS[icon];
+            const nameInp = document.getElementById('scooter-custom-name');
+            const capInp = document.getElementById('scooter-capacity');
+            const scootInp = document.getElementById('scooter-weight');
+            const speedSlider = document.getElementById('scooter-speed-slider');
+            const valSpeed = document.getElementById('val-speed-slider');
+
+            if (nameInp && (!nameInp.value || Object.values(VEHICLE_TYPES_PRESETS).some(vp => vp.name === nameInp.value))) {
+              nameInp.value = p.name;
+            }
+            if (capInp) capInp.value = p.wh;
+            if (scootInp) scootInp.value = p.scootKg;
+            if (speedSlider) {
+              speedSlider.value = p.speed;
+              if (valSpeed) valSpeed.textContent = `${p.speed} km/h`;
+              document.querySelectorAll('.speed-preset-btn').forEach(b => b.classList.toggle('active', parseInt(b.getAttribute('data-speed'), 10) === p.speed));
+            }
+          }
         });
       });
 
@@ -2797,12 +3431,12 @@
       if (btnSaveScooter) {
         btnSaveScooter.addEventListener('click', () => {
           const editId = document.getElementById('edit-scooter-id').value;
-          const name = document.getElementById('scooter-custom-name').value.trim() || 'Ma Trottinette';
+          const name = document.getElementById('scooter-custom-name').value.trim() || 'Mon Véhicule';
           const capWh = parseInt(document.getElementById('scooter-capacity').value, 10) || 474;
           const riderKg = parseInt(document.getElementById('scooter-rider-weight').value, 10) || 75;
           const scootKg = parseInt(document.getElementById('scooter-weight').value, 10) || 18;
           const speed = parseInt(document.getElementById('scooter-speed-slider').value, 10) || 25;
-          const battPct = parseInt(document.getElementById('scooter-battery-pct').value, 10) || 80;
+          const battPct = parseInt(document.getElementById('scooter-battery-pct').value, 10) || 100;
 
           const data = {
             name,
@@ -3163,7 +3797,9 @@
         this.elLiveRecordingHud.style.display = 'none';
         this.mapManager.clearLiveTrack();
         if (saved) {
+          this.garageManager.addKmToActiveScooter(saved.distanceKm);
           this.authManager.updateUserStats(saved.distanceKm, 1);
+          this.renderGarageFleetUI();
           this.updateUserAuthUI();
           this.updateAccordionSummaries();
           this.showToast(`🎉 Trajet enregistré : ${saved.distanceKm} km (${saved.avgSpeedKmh} km/h)`);
@@ -3176,11 +3812,53 @@
         this.showToast('🎯 Centrage & suivi GPS');
       });
 
-      // Cockpit Bell
-      document.getElementById('btn-cockpit-bell').addEventListener('click', () => {
-        this.hazardManager.playCockpitBell();
-        this.showToast('🔔 Dring Dring !');
-      });
+      // Parking FAB & Modal Listeners
+      const btnParkFab = document.getElementById('btn-park-scooter');
+      const modalPark = document.getElementById('park-scooter-modal');
+      const btnClosePark = document.getElementById('btn-close-park-modal');
+      const btnConfirmPark = document.getElementById('btn-confirm-park');
+      const inpParkNote = document.getElementById('park-memo-note');
+      const btnParkedWalk = document.getElementById('btn-parked-walk');
+      const btnParkedClear = document.getElementById('btn-parked-clear');
+
+      if (btnParkFab) {
+        btnParkFab.addEventListener('click', () => {
+          if (modalPark) modalPark.style.display = 'flex';
+          if (inpParkNote) {
+            inpParkNote.value = '';
+            inpParkNote.focus();
+          }
+        });
+      }
+
+      if (btnClosePark && modalPark) {
+        btnClosePark.addEventListener('click', () => {
+          modalPark.style.display = 'none';
+        });
+      }
+
+      if (btnConfirmPark) {
+        btnConfirmPark.addEventListener('click', () => {
+          const loc = this.mapManager.currentLocation;
+          const note = (inpParkNote ? inpParkNote.value : '');
+          this.parkingManager.parkHere(loc.lat, loc.lng, note);
+          if (modalPark) modalPark.style.display = 'none';
+          if (inpParkNote) inpParkNote.value = '';
+        });
+      }
+
+      if (btnParkedWalk) {
+        btnParkedWalk.addEventListener('click', () => {
+          this.parkingManager.navigateToParkedScooter();
+        });
+      }
+
+      if (btnParkedClear) {
+        btnParkedClear.addEventListener('click', () => {
+          this.parkingManager.clearParking();
+        });
+      }
+
 
       // Theme toggle
       document.getElementById('btn-toggle-theme').addEventListener('click', () => {
@@ -3209,10 +3887,15 @@
         chip.addEventListener('click', () => {
           const favKey = chip.getAttribute('data-fav');
           const fav = this.historyManager.getFavorite(favKey);
-          if (fav) {
+          if (fav && fav.lat && fav.lng) {
             this.selectedEndCoords = { lat: fav.lat, lng: fav.lng };
-            this.elEndInput.value = fav.full;
+            this.elEndInput.value = fav.full || fav.name;
             this.calculateCurrentRoute();
+          } else {
+            const label = favKey === 'home' ? 'Domicile' : 'Travail';
+            this.showToast(`ℹ️ Entrez une adresse pour votre ${label}`);
+            this.elEndInput.placeholder = `Adresse ${label}...`;
+            this.elEndInput.focus();
           }
         });
       });
@@ -3506,6 +4189,10 @@
       this.updateRouteCardsUI();
       this.applySelectedRoute();
 
+      if (this.chargingManager && this.chargingManager.isVisible) {
+        this.chargingManager.fetchRealEVStations(endCoords.lat, endCoords.lng);
+      }
+
       this.elExpandableContent.style.display = 'block';
       this.elStickyLaunchBar.style.display = 'flex';
     }
@@ -3518,8 +4205,9 @@
         if (card) {
           const timeEl = card.querySelector('.route-stat-time');
           const metaEl = card.querySelector('.route-stat-meta');
+          const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5);
           if (timeEl) timeEl.textContent = `${r.durationMin} min`;
-          if (metaEl) metaEl.textContent = `${r.distanceKm} km • ${r.cobblestonesCount === 0 ? '0 pavé' : r.cobblestonesCount + ' pavé'}`;
+          if (metaEl) metaEl.textContent = `${r.distanceKm} km • ⚡ -${batt.consumedPct}% (${batt.whUsed} Wh)`;
         }
       });
     }
@@ -3529,21 +4217,36 @@
       const r = this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes.safe;
       this.mapManager.drawRoute(r.coordinates, this.selectedRouteMode);
 
+      const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5);
+
       if (this.elLaunchButtonLabel) {
-        this.elLaunchButtonLabel.textContent = `DÉMARRER (${r.durationMin} MIN • ${r.distanceKm} KM)`;
+        this.elLaunchButtonLabel.textContent = `DÉMARRER (${r.durationMin} MIN • ${r.distanceKm} KM • -${batt.consumedPct}%)`;
       }
       if (this.elLaunchButtonSub) {
-        this.elLaunchButtonSub.textContent = `${r.protectedPct}% Pistes • ${r.praticability}`;
+        this.elLaunchButtonSub.textContent = `⚡ Conso : ${batt.whUsed} Wh • 🔌 Recharge ~${batt.rechargeTimeMin} min (230V) • ${r.protectedPct}% Pistes`;
       }
 
       const elevSummary = document.getElementById('elev-gain-summary');
-      if (elevSummary) elevSummary.textContent = `+${r.elevationGainM} m / -${r.elevationLossM} m • Max ${r.maxSlopePct}%`;
+      if (elevSummary) {
+        elevSummary.textContent = `+${r.elevationGainM}m / -${r.elevationLossM}m • Montée : +${batt.climbWh} Wh | KERS : -${batt.regenWh} Wh`;
+      }
 
       const elevEnd = document.getElementById('elev-end-dist');
       if (elevEnd) elevEnd.textContent = `${r.distanceKm} km`;
 
-      const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM);
-      this.elBatteryArrival.textContent = `Fin: ~${batt.arrivalPct}%`;
+      if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-${batt.consumedPct}%`;
+      if (this.elBatteryArrival) this.elBatteryArrival.textContent = `⚡ Conso : ${batt.whUsed} Wh (🔌 ~${batt.rechargeTimeMin}m)`;
+      if (this.elBatteryFill) this.elBatteryFill.style.width = `${Math.min(100, Math.max(12, batt.consumedPct))}%`;
+
+      const thermalTag = document.getElementById('batt-thermal-impact-tag');
+      if (thermalTag) {
+        if (batt.thermalLossWh > 0 || batt.tempC <= 10 || batt.tempC >= 30) {
+          thermalTag.style.display = 'inline-block';
+          thermalTag.textContent = batt.thermalLabel;
+        } else {
+          thermalTag.style.display = 'none';
+        }
+      }
     }
 
     beginTrip(isSimulated = false) {
@@ -3569,12 +4272,22 @@
     }
 
     handleArrival() {
+      if (this.navigationEngine && this.navigationEngine.activeRoute && this.navigationEngine.activeRoute.distanceKm) {
+        const km = this.navigationEngine.activeRoute.distanceKm;
+        this.garageManager.addKmToActiveScooter(km);
+        this.authManager.updateUserStats(km, 1);
+        this.renderGarageFleetUI();
+        this.updateUserAuthUI();
+      }
       this.voiceEngine.speak("Vous êtes arrivé à destination.", 'turn');
       this.showToast('🎉 Arrivée à destination !');
       setTimeout(() => this.endTrip(), 4000);
     }
 
     handleSpeedUpdate(speedKmh) {
+      if (this.cockpitHUD) {
+        this.cockpitHUD.updateSpeed(speedKmh);
+      }
       this.elSpeedVal.textContent = speedKmh;
       const configuredSpeed = this.batteryEngine.config.speedPrefKmh || 25;
       this.elSpeedLimitBadge.textContent = configuredSpeed;
@@ -3608,7 +4321,10 @@
     handleTripUpdate(trip) {
       this.elHudTimeRem.textContent = `${trip.remainingMin} min`;
       this.elHudDistRem.textContent = `${trip.remainingDistKm} km`;
-      if (trip.batteryStatus) this.elBatteryArrival.textContent = `Fin: ~${trip.batteryStatus.arrivalPct}%`;
+      if (trip.batteryStatus) {
+        this.elBatteryPercent.textContent = `-${trip.batteryStatus.consumedPct || 0}%`;
+        this.elBatteryArrival.textContent = `⚡ Conso : ${trip.batteryStatus.whUsed || 0} Wh`;
+      }
     }
 
     handleRideRecorderUpdate(stats) {

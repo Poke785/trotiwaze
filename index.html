@@ -343,18 +343,33 @@
         </div>
       </div>
 
-      <!-- Battery Estimation Widget -->
-      <div class="hud-battery-box" id="hud-battery-container" title="Estimation batterie">
+      <!-- Battery Estimation Widget (% Consommé & Wh) -->
+      <div class="hud-battery-box" id="hud-battery-container" title="Estimation de consommation batterie">
         <div class="battery-icon-wrapper">
           <div class="battery-shell">
-            <div class="battery-level" id="hud-battery-fill" style="width: 80%;"></div>
+            <div class="battery-level" id="hud-battery-fill" style="width: 15%;"></div>
           </div>
           <span class="battery-tip"></span>
         </div>
         <div class="battery-text">
-          <div class="battery-percent" id="hud-battery-percent">80%</div>
-          <div class="battery-sub" id="hud-battery-arrival">Fin: ~68%</div>
+          <div class="battery-percent" id="hud-battery-percent">-0%</div>
+          <div class="battery-sub" id="hud-battery-arrival">⚡ Conso : 0 Wh</div>
+          <span class="batt-thermal-badge" id="batt-thermal-impact-tag" style="display: none;">❄️ Froid</span>
         </div>
+      </div>
+    </div>
+
+    <!-- Parked Scooter Floating Banner -->
+    <div id="parked-scooter-floating-banner" class="glass-panel parked-scooter-banner" style="display: none;">
+      <div class="parked-banner-left">
+        <span class="parked-badge-icon">🅿️</span>
+        <div class="parked-banner-info">
+          <span id="parked-banner-text"><strong>Trottinette garée</strong></span>
+        </div>
+      </div>
+      <div class="parked-banner-actions">
+        <button id="btn-parked-walk" class="btn-micro green" title="Itinéraire pour retrouver ma trottinette">🚶 Retrouver</button>
+        <button id="btn-parked-clear" class="btn-micro danger" title="Libérer le stationnement">🔓</button>
       </div>
     </div>
 
@@ -375,15 +390,79 @@
         🔴
       </button>
 
-      <!-- Cockpit Bell Button -->
-      <button id="btn-cockpit-bell" class="fab-btn bell-btn" title="Actionner la sonnette trottinette (Dring Dring !)">
-        🔔
+      <!-- Park Scooter Button (Où est garée ma trottinette ?) -->
+      <button id="btn-park-scooter" class="fab-btn park-fab" title="Mémoriser mon stationnement (Où est garée ma trottinette ?)">
+        🅿️
+      </button>
+
+      <!-- Cockpit HUD Fullscreen Handlebar Mode Button -->
+      <button id="btn-open-cockpit-hud" class="fab-btn hud-cockpit-btn" title="Mode Cockpit Guidon Plein Écran (Tachymètre, Watts, Inclinomètre)">
+        🎛️
       </button>
 
       <!-- Waze Report Hazard Button -->
       <button id="btn-report-hazard" class="fab-btn report-hazard-btn" title="Signaler un danger ou une prise 230V sur la piste">
         ⚠️
       </button>
+    </div>
+
+    <!-- Fullscreen Cockpit HUD Handlebar Overlay -->
+    <div id="cockpit-hud-overlay" class="cockpit-hud-fullscreen" style="display: none;">
+      <div class="cockpit-hud-header">
+        <div class="cockpit-brand-badge">
+          <span class="cockpit-avatar-icon" id="cockpit-vehicle-icon">🛴</span>
+          <div class="cockpit-brand-info">
+            <span class="cockpit-brand-title" id="cockpit-vehicle-name">COCKPIT GUIDON</span>
+            <span class="cockpit-brand-sub" id="cockpit-speed-limit-label">BRIDE : 25 KM/H</span>
+          </div>
+        </div>
+        <div class="cockpit-top-actions">
+          <button id="btn-cockpit-mirror" class="cockpit-chip-btn" title="Mode Miroir Tête-Haute (HUD Visière)">🪞 Miroir</button>
+          <button id="btn-close-cockpit-hud" class="cockpit-close-btn" title="Quitter le Cockpit">✕</button>
+        </div>
+      </div>
+
+      <!-- Giant Speed Gauge with Instant Power Watts -->
+      <div class="cockpit-main-gauge">
+        <div class="cockpit-speed-display">
+          <span class="cockpit-speed-number" id="cockpit-speed-val">0</span>
+          <span class="cockpit-speed-unit">KM/H</span>
+        </div>
+        
+        <div class="cockpit-power-box">
+          <div class="cockpit-power-header">
+            <span>⚡ PUISSANCE MOTEUR</span>
+            <span id="cockpit-power-watts" class="mono">0 W</span>
+          </div>
+          <div class="cockpit-power-meter-track">
+            <div class="cockpit-power-meter-fill" id="cockpit-power-meter-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Telemetry & Ride Dashboard Grid -->
+      <div class="cockpit-telemetry-grid">
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">📐 Inclinomètre / Pente</span>
+          <span class="cockpit-cell-value highlight mono" id="cockpit-slope-val">0.0%</span>
+          <span class="cockpit-cell-sub" id="cockpit-slope-sub">Plat</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">🔋 Conso Batterie</span>
+          <span class="cockpit-cell-value mono" id="cockpit-batt-val">-0%</span>
+          <span class="cockpit-cell-sub" id="cockpit-wh-val">0 Wh</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">⏱️ Chrono Trajet</span>
+          <span class="cockpit-cell-value mono" id="cockpit-chrono-val">00:00:00</span>
+          <span class="cockpit-cell-sub" id="cockpit-dist-val">0.00 km</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">🏁 Vitesse Moyenne</span>
+          <span class="cockpit-cell-value mono" id="cockpit-avg-speed-val">0.0 km/h</span>
+          <span class="cockpit-cell-sub" id="cockpit-max-speed-sub">Max: 0.0 km/h</span>
+        </div>
+      </div>
     </div>
 
     <!-- Simulation Speed Controller (visible in demo mode) -->
@@ -394,6 +473,31 @@
       <button id="btn-simu-2x" class="btn-micro">2x</button>
       <button id="btn-simu-4x" class="btn-micro">4x</button>
       <button id="btn-simu-stop" class="btn-micro danger">Quitter</button>
+    </div>
+
+    <!-- Park Scooter Confirmation Modal -->
+    <div id="park-scooter-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 380px;">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">🅿️ Mémoriser mon Stationnement</div>
+            <div class="modal-subtitle">Retrouvez facilement votre trottinette à votre retour</div>
+          </div>
+          <button id="btn-close-park-modal" class="icon-btn">✕</button>
+        </div>
+        <div class="modal-body-p" style="padding: 14px 18px;">
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;">
+            📍 Votre position GPS actuelle sera enregistrée comme lieu de stationnement avec un repère 🅿️ sur la carte.
+          </p>
+          <div class="form-group">
+            <label class="form-label" for="park-memo-note">📝 Note / Point de repère (Optionnel) :</label>
+            <input type="text" id="park-memo-note" class="form-input" placeholder="Ex: Arceau vélo devant le cinéma, 2e étage...">
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <button id="btn-confirm-park" class="btn-primary" style="flex: 1; padding: 10px 16px;">📍 Mémoriser ce stationnement</button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- =====================================================================
@@ -421,11 +525,11 @@
                 <span class="acc-header-icon">🛴</span>
                 <div class="acc-header-titles">
                   <span class="acc-title">Mon Garage de Trottinettes</span>
-                  <span class="acc-subtitle" id="acc-garage-summary">Modèle actif : Ninebot MAX (474 Wh • 25 km/h)</span>
+                  <span class="acc-subtitle" id="acc-garage-summary">Aucune trottinette enregistrée (Garage vide)</span>
                 </div>
               </div>
               <div class="acc-header-right">
-                <span class="acc-badge" id="acc-garage-badge">1 active</span>
+                <span class="acc-badge" id="acc-garage-badge">0 active</span>
                 <span class="acc-chevron">▼</span>
               </div>
             </button>
@@ -458,13 +562,15 @@
 
                 <!-- Scooter Avatar / Icon Picker -->
                 <div class="form-group">
-                  <label>🎨 Icône du modèle</label>
+                  <label>🎨 Type de Véhicule & Silhouette</label>
                   <div class="scooter-icon-picker">
-                    <button type="button" class="scooter-icon-choice active" data-icon="🛴">🛴 Standard</button>
-                    <button type="button" class="scooter-icon-choice" data-icon="⚡">⚡ Puissante</button>
-                    <button type="button" class="scooter-icon-choice" data-icon="🚀">🚀 Sport</button>
-                    <button type="button" class="scooter-icon-choice" data-icon="🟢">🟢 City</button>
-                    <button type="button" class="scooter-icon-choice" data-icon="🛡️">🛡️ Renforcée</button>
+                    <button type="button" class="scooter-icon-choice active" data-icon="🛴">🛴 Trotti</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="⚡">⚡ Sport</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🎡">🎡 Gyroroue</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛹">🛹 E-Skate</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🚲">🚲 VAE</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛞">🛞 Onewheel</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛵">🛵 Draisine</button>
                   </div>
                 </div>
 
@@ -472,7 +578,7 @@
                 <div class="form-group">
                   <div class="form-label-row">
                     <label for="scooter-capacity">🔋 Capacité batterie (Wh)</label>
-                    <button type="button" id="btn-toggle-wh-calc" class="link-btn">Calculer Volts × Ah</button>
+                    <button type="button" id="btn-toggle-wh-calc" class="btn-calc-wh-toggle" title="Ouvrir le calculateur Tension × Ampères-heures">⚡ Calculer (V × Ah)</button>
                   </div>
                   <div class="numeric-input-wrapper">
                     <input type="number" inputmode="numeric" pattern="[0-9]*" id="scooter-capacity" min="100" max="5000" value="474" placeholder="ex: 474" class="styled-number-input">
@@ -481,13 +587,13 @@
 
                   <!-- V x Ah mini calculator -->
                   <div id="wh-calc-drawer" class="calc-drawer" style="display: none;">
-                    <span class="calc-title">💡 Calculateur Tension × Capacité :</span>
+                    <span class="calc-title">💡 Calculateur Tension (V) × Capacité (Ah) :</span>
                     <div class="calc-row">
                       <input type="number" id="calc-volts" placeholder="Volts (ex: 36, 48, 52)" class="styled-mini-input">
-                      <span>×</span>
-                      <input type="number" id="calc-amphours" placeholder="Ah (ex: 13, 15, 20)" class="styled-mini-input">
-                      <span>=</span>
-                      <button type="button" id="btn-apply-wh-calc" class="btn-micro green">Appliquer</button>
+                      <span class="calc-sym">×</span>
+                      <input type="number" id="calc-amphours" step="0.1" placeholder="Ah (ex: 13, 15, 20)" class="styled-mini-input">
+                      <span class="calc-sym">=</span>
+                      <button type="button" id="btn-apply-wh-calc" class="btn-micro green">Appliquer aux Wh</button>
                     </div>
                   </div>
                 </div>
@@ -529,10 +635,10 @@
 
                 <!-- Battery Level Percentage -->
                 <div class="form-group">
-                  <label for="scooter-battery-pct">🔋 Niveau de charge actuel (%)</label>
+                  <label for="scooter-battery-pct">🔋 Niveau de charge de départ (%)</label>
                   <div class="range-with-val">
-                    <input type="range" id="scooter-battery-pct" min="5" max="100" value="80" class="styled-range">
-                    <span id="val-battery-pct" class="range-val">80%</span>
+                    <input type="range" id="scooter-battery-pct" min="5" max="100" value="100" class="styled-range">
+                    <span id="val-battery-pct" class="range-val">100%</span>
                   </div>
                 </div>
 
@@ -665,17 +771,27 @@
 
               <p class="tab-subtitle">Choisissez le style de carte :</p>
               <div class="map-layers-grid">
-                <!-- Layer 1: OpenStreetMap Standard -->
-                <div class="map-layer-option active" data-layer-id="osm">
-                  <div class="layer-preview osm-preview">🌍</div>
+                <!-- Layer 1: Style Waze Cartoon HD (CartoDB Voyager) -->
+                <div class="map-layer-option active" data-layer-id="waze">
+                  <div class="layer-preview waze-preview">🎨</div>
                   <div class="layer-info">
-                    <div class="layer-name">OpenStreetMap Standard (Recommandé)</div>
-                    <div class="layer-desc">Chargement rapide, ultra-fiable et léger sur mobile</div>
+                    <div class="layer-name">Style Waze Cartoon HD (Recommandé)</div>
+                    <div class="layer-desc">Couleurs vives, vectoriel playful & super lisible sur mobile</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 2: CyclOSM France (Cycle Infrastructure) -->
+                <!-- Layer 2: OpenStreetMap Standard -->
+                <div class="map-layer-option" data-layer-id="osm">
+                  <div class="layer-preview osm-preview">🌍</div>
+                  <div class="layer-info">
+                    <div class="layer-name">OpenStreetMap Standard</div>
+                    <div class="layer-desc">Chargement rapide, ultra-fiable et universel</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 3: CyclOSM France (Cycle Infrastructure) -->
                 <div class="map-layer-option" data-layer-id="cyclosm">
                   <div class="layer-preview cyclosm-preview">🚲</div>
                   <div class="layer-info">
@@ -685,9 +801,9 @@
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 3: Esri Streets GPS -->
+                <!-- Layer 4: Esri Streets GPS -->
                 <div class="map-layer-option" data-layer-id="streets">
-                  <div class="layer-preview waze-preview">🛴</div>
+                  <div class="layer-preview esri-preview">🛴</div>
                   <div class="layer-info">
                     <div class="layer-name">Style GPS Urbain (Esri Streets)</div>
                     <div class="layer-desc">Contraste élevé et guidage routier clair</div>
@@ -695,17 +811,27 @@
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 4: IGN Géoportail -->
-                <div class="map-layer-option" data-layer-id="ign">
-                  <div class="layer-preview ign-preview">🏛️</div>
+                <!-- Layer 5: OpenTopoMap Relief & Pentes -->
+                <div class="map-layer-option" data-layer-id="opentopo">
+                  <div class="layer-preview topo-preview">🏔️</div>
                   <div class="layer-info">
-                    <div class="layer-name">Plan IGN France Officiel</div>
-                    <div class="layer-desc">Cartographie nationale de référence</div>
+                    <div class="layer-name">OpenTopoMap (Relief & Dénivelé HD)</div>
+                    <div class="layer-desc">Courbes de niveau et ombrage des collines et côtes</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 5: Satellite -->
+                <!-- Layer 6: IGN Géoportail -->
+                <div class="map-layer-option" data-layer-id="ign">
+                  <div class="layer-preview ign-preview">🏛️</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Plan IGN France Officiel</div>
+                    <div class="layer-desc">Cartographie nationale de référence (GEOPF)</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 7: Vue Satellite Réelle HD -->
                 <div class="map-layer-option" data-layer-id="satellite">
                   <div class="layer-preview sat-preview">🛰️</div>
                   <div class="layer-info">
@@ -715,7 +841,7 @@
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 6: Mode Nuit OLED -->
+                <!-- Layer 8: Mode Nuit OLED -->
                 <div class="map-layer-option" data-layer-id="night">
                   <div class="layer-preview night-preview">🌙</div>
                   <div class="layer-info">
