@@ -113,137 +113,81 @@
         <button class="chip fav-chip-add" id="btn-quick-record-trigger">🔴 Enregistrer</button>
       </div>
 
-      <!-- Expandable Route Details Section -->
-      <div id="panel-expandable-content" style="display: none;">
-        <!-- Rain & Weather Warning Alert Card -->
-        <div id="rain-warning-card" class="rain-alert-box" style="display: none;">
-          <div class="rain-alert-header">
-            <span class="rain-icon">🌧️</span>
-            <span class="rain-title" id="rain-alert-title">Avertissement Risque de Pluie (65%)</span>
-          </div>
-          <p class="rain-advice" id="rain-alert-advice">
-            ⚠️ <strong>Sol glissant :</strong> Distance de freinage x2 ! Réduisez votre vitesse et évitez de pencher sur les bandes blanches, pavés et plaques métalliques.
-          </p>
-        </div>
-
-        <!-- Detailed Multi-Route Comparison Grid (4 Routes) -->
-        <div id="route-modes" class="route-modes-grid-4">
-          <!-- Route 1: Safe -->
-          <div class="route-card active" data-mode="safe">
-            <div class="route-card-top">
-              <span class="route-badge-piste">92% Pistes</span>
-              <span class="route-climb-tag" title="Dénivelé positif">↗ +12m</span>
-            </div>
-            <div class="route-card-title">🟢 Sécurisé</div>
-            <div class="route-stat-time">14 min</div>
-            <div class="route-stat-meta">3.4 km • 0 pavé</div>
-            <div class="praticability-tag optimal">✨ 100% Bitumé lisse</div>
-            <div class="surface-bar">
-              <span class="surface-seg green" style="width: 92%;"></span>
-              <span class="surface-seg blue" style="width: 6%;"></span>
-              <span class="surface-seg yellow" style="width: 2%;"></span>
-            </div>
-          </div>
-
-          <!-- Route 2: Fast -->
-          <div class="route-card" data-mode="fast">
-            <div class="route-card-top">
-              <span class="route-badge-neutral">58% Pistes</span>
-              <span class="route-climb-tag" title="Dénivelé positif">↗ +19m</span>
-            </div>
-            <div class="route-card-title">⚡ Rapide</div>
-            <div class="route-stat-time">11 min</div>
-            <div class="route-stat-meta">2.9 km • Direct</div>
-            <div class="praticability-tag warning">⚠️ 1 section pavée</div>
-            <div class="surface-bar">
-              <span class="surface-seg green" style="width: 58%;"></span>
-              <span class="surface-seg blue" style="width: 27%;"></span>
-              <span class="surface-seg yellow" style="width: 15%;"></span>
-            </div>
-          </div>
-
-          <!-- Route 3: Eco & Flat -->
-          <div class="route-card" data-mode="eco">
-            <div class="route-card-top">
-              <span class="route-badge-battery">Ultra-Plat</span>
-              <span class="route-climb-tag flat" title="Dénivelé quasi nul">↗ +3m</span>
-            </div>
-            <div class="route-card-title">🔋 Éco & Plat</div>
-            <div class="route-stat-time">16 min</div>
-            <div class="route-stat-meta">3.8 km • Plat</div>
-            <div class="praticability-tag optimal">✨ Zéro montée</div>
-            <div class="surface-bar">
-              <span class="surface-seg green" style="width: 86%;"></span>
-              <span class="surface-seg blue" style="width: 11%;"></span>
-              <span class="surface-seg yellow" style="width: 3%;"></span>
-            </div>
-          </div>
-
-          <!-- Route 4: Nature / Greenways -->
-          <div class="route-card" data-mode="nature">
-            <div class="route-card-top">
-              <span class="route-badge-emerald">100% Apaisé</span>
-              <span class="route-climb-tag flat" title="Dénivelé doux">↗ +5m</span>
-            </div>
-            <div class="route-card-title">🌳 Voies Vertes</div>
-            <div class="route-stat-time">17 min</div>
-            <div class="route-stat-meta">4.1 km • Berges</div>
-            <div class="praticability-tag good">🌿 Stabilisé fin</div>
-            <div class="surface-bar">
-              <span class="surface-seg green" style="width: 96%;"></span>
-              <span class="surface-seg blue" style="width: 4%;"></span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Elevation Profile & Surface Breakdown -->
-        <div id="elevation-drawer" class="elevation-profile-container">
-          <div class="elevation-header">
-            <div class="elevation-title">
-              <span>📈 Dénivelé & Profil Pente</span>
-              <span class="elevation-meta" id="elev-gain-summary">+12 m / -8 m • Max 3.2%</span>
-            </div>
-            <span class="slope-difficulty-pill easy" id="slope-diff-badge">Pente Douce</span>
-          </div>
-          <div class="elevation-svg-wrapper">
-            <svg id="elevation-svg" viewBox="0 0 380 65" preserveAspectRatio="none">
-              <defs>
-                <linearGradient id="elevGradient" x1="0" y1="0" x2="0" y2="1">
-                  <stop offset="0%" stop-color="#10b981" stop-opacity="0.5"/>
-                  <stop offset="100%" stop-color="#10b981" stop-opacity="0.02"/>
-                </linearGradient>
-              </defs>
-              <path id="elev-area-path" d="M 0 55 Q 95 35 190 30 T 380 45 L 380 65 L 0 65 Z" fill="url(#elevGradient)" />
-              <path id="elev-line-path" d="M 0 55 Q 95 35 190 30 T 380 45" fill="none" stroke="#10b981" stroke-width="2.5" stroke-linecap="round" />
-            </svg>
-            <div class="elevation-labels">
-              <span>0 km</span>
-              <span id="elev-mid-dist">1.7 km</span>
-              <span id="elev-end-dist">3.4 km</span>
-            </div>
-          </div>
-          <div class="infrastructure-summary" id="infrastructure-summary">
-            <span class="infra-pill green">🛡️ 3.1 km Bitumé</span>
-            <span class="infra-pill blue">🚲 0.3 km Bande</span>
-            <span class="infra-pill gold">✨ Pavés évités</span>
-            <span class="infra-pill green">🚫 0 km terre</span>
-          </div>
-        </div>
-      </div>
     </div>
 
-    <!-- Sticky / Floating Launch Bar -->
-    <div id="sticky-launch-bar" class="glass-panel" style="display: none;">
-      <button id="btn-start-nav" class="btn-launch-primary">
-        <span class="launch-icon">🚀</span>
-        <div class="launch-text-box">
-          <span class="launch-main-text" id="launch-button-label">DÉMARRER L'ITINÉRAIRE</span>
-          <span class="launch-sub-text" id="launch-button-sub">14 min • 3.4 km • 92% Pistes</span>
+    <!-- Waze-Style Route Selection & Launch Bottom Sheet (Zero Scroll, 100% visible) -->
+    <div id="waze-route-sheet" class="glass-panel waze-bottom-sheet" style="display: none;">
+      <!-- Mobile Drag Handle & Toggle Button -->
+      <div class="waze-sheet-bar" id="waze-sheet-toggle" title="Réduire / Agrandir le sélecteur">
+        <span class="waze-sheet-pill"></span>
+        <span class="waze-sheet-title">Itinéraires TrottiWaze</span>
+        <button id="btn-toggle-route-sheet" class="waze-sheet-btn" title="Réduire / Agrandir">▼</button>
+      </div>
+
+      <div id="waze-sheet-body" class="waze-sheet-body">
+        <!-- 3 Route Cards Side-by-Side (Zero Scroll) -->
+        <div id="route-modes" class="route-modes-3">
+          <!-- Route 1: Fast -->
+          <div class="route-card-waze active" data-mode="fast">
+            <div class="rcw-badge fast-badge">⚡ Direct</div>
+            <div class="rcw-time" id="rcw-time-fast">– min</div>
+            <div class="rcw-dist" id="rcw-dist-fast">– km</div>
+            <div class="rcw-climb" id="rcw-climb-fast">↗ +22m</div>
+            <div class="rcw-piste" id="rcw-piste-fast">56% pistes</div>
+            <div class="rcw-bar">
+              <span class="rcw-seg green" style="width:56%"></span>
+              <span class="rcw-seg blue" style="width:28%"></span>
+              <span class="rcw-seg yellow" style="width:16%"></span>
+            </div>
+          </div>
+          <!-- Route 2: Safe -->
+          <div class="route-card-waze" data-mode="safe">
+            <div class="rcw-badge safe-badge">🟢 Sécurisé</div>
+            <div class="rcw-time" id="rcw-time-safe">– min</div>
+            <div class="rcw-dist" id="rcw-dist-safe">– km</div>
+            <div class="rcw-climb" id="rcw-climb-safe">↗ +12m</div>
+            <div class="rcw-piste" id="rcw-piste-safe">92% pistes</div>
+            <div class="rcw-bar">
+              <span class="rcw-seg green" style="width:92%"></span>
+              <span class="rcw-seg blue" style="width:6%"></span>
+              <span class="rcw-seg yellow" style="width:2%"></span>
+            </div>
+          </div>
+          <!-- Route 3: Eco -->
+          <div class="route-card-waze" data-mode="eco">
+            <div class="rcw-badge eco-badge">🔋 Éco &amp; Plat</div>
+            <div class="rcw-time" id="rcw-time-eco">– min</div>
+            <div class="rcw-dist" id="rcw-dist-eco">– km</div>
+            <div class="rcw-climb" id="rcw-climb-eco">↗ +3m plat</div>
+            <div class="rcw-piste" id="rcw-piste-eco">Contourne relief</div>
+            <div class="rcw-bar">
+              <span class="rcw-seg green" style="width:88%"></span>
+              <span class="rcw-seg blue" style="width:10%"></span>
+              <span class="rcw-seg yellow" style="width:2%"></span>
+            </div>
+          </div>
         </div>
-      </button>
-      <button id="btn-start-simu" class="btn-launch-secondary" title="Simuler l'itinéraire">
-        🎮 Démo
-      </button>
+
+        <!-- Elevation & Relief Info Pill -->
+        <div class="waze-sheet-elevation-pill" id="waze-elevation-pill">
+          <span id="elev-gain-summary">📈 Dénivelé calculé selon l'itinéraire</span>
+          <span id="elev-end-dist" style="display:none;"></span>
+        </div>
+
+        <!-- Action Launch Buttons -->
+        <div class="waze-sheet-actions">
+          <button id="btn-start-nav" class="btn-launch-primary">
+            <span class="launch-icon">🚀</span>
+            <div class="launch-text-box">
+              <span class="launch-main-text" id="launch-button-label">DÉMARRER</span>
+              <span class="launch-sub-text" id="launch-button-sub">-- min • -- km</span>
+            </div>
+          </button>
+          <button id="btn-start-simu" class="btn-launch-secondary" title="Simuler l'itinéraire">
+            🎮 Démo
+          </button>
+        </div>
+      </div>
     </div>
 
     <!-- Live Ride Recording Banner (Geovelo Style) -->
@@ -771,12 +715,12 @@
 
               <p class="tab-subtitle">Choisissez le style de carte :</p>
               <div class="map-layers-grid">
-                <!-- Layer 1: Style Waze Cartoon HD (CartoDB Voyager) -->
+                <!-- Layer 1: Style Cartoon Dessin Animé HD -->
                 <div class="map-layer-option active" data-layer-id="waze">
                   <div class="layer-preview waze-preview">🎨</div>
                   <div class="layer-info">
-                    <div class="layer-name">Style Waze Cartoon HD (Recommandé)</div>
-                    <div class="layer-desc">Couleurs vives, vectoriel playful & super lisible sur mobile</div>
+                    <div class="layer-name">Style Cartoon Dessin Animé HD (Recommandé)</div>
+                    <div class="layer-desc">Rendu doux pastel, routes bien contrastées & parcs arrondis sans pub</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>

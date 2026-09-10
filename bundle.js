@@ -481,50 +481,56 @@
       };
     }
 
-    estimateTrip(distanceKm, elevationGainM = 5, elevationLossM = 5) {
+    estimateTrip(distanceKm, elevationGainM = 5, elevationLossM = 5, customSpeed = null) {
       const cfg = this.config;
-      const totalMassKg = (cfg.riderWeightKg || 75) + (cfg.scooterWeightKg || 18);
-      const weightFactor = totalMassKg / 90;
-      const speedRatio = Math.max(15, cfg.speedPrefKmh || 25) / 20;
-      const speedFactor = Math.pow(speedRatio, 1.7);
+      const riderKg = cfg.riderWeightKg || 75;
+      const scooterKg = cfg.scooterWeightKg || 18;
+      const totalMassKg = riderKg + scooterKg;
+      const weightFactor = totalMassKg / 90; // Masse de référence pilote 72kg + trottinette 18kg
+      const effectiveSpeed = customSpeed || cfg.speedPrefKmh || 25;
 
-      // 1. Énergie de roulement + traînée aérodynamique sur le plat
-      const flatEnergyWh = distanceKm * this.baseEfficiencyWhPerKm * weightFactor * speedFactor;
+      // 1. Modèle physique de consommation sur le plat :
+      // - Roulement pneu/frottements : ~7.2 Wh/km (proportionnel à la masse)
+      // - Traînée aérodynamique : ~5.2 Wh/km à 20 km/h, varie selon le carré de la vitesse (v/20)^2
+      const baseRollingWhPerKm = 7.2 * weightFactor;
+      const speedRatio = Math.max(12, effectiveSpeed) / 20;
+      const aeroWhPerKm = 5.2 * Math.pow(speedRatio, 2);
+      const flatEfficiencyWhPerKm = baseRollingWhPerKm + aeroWhPerKm;
+      const flatEnergyWh = distanceKm * flatEfficiencyWhPerKm;
 
       // 2. Énergie en montée (dénivelé positif) : E_climb = (m * g * deltaH) / (3600 * rendement)
       const avgSlopePct = distanceKm > 0 ? (elevationGainM / (distanceKm * 1000)) * 100 : 0;
-      const motorEfficiency = avgSlopePct > 6 ? 0.60 : 0.72;
+      const motorEfficiency = avgSlopePct > 5 ? 0.68 : 0.76;
       const climbEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationGainM)) / (3600 * motorEfficiency);
 
-      // 3. Récupération d'énergie au freinage régénératif (KERS) en descente (~25%)
-      const regenEfficiency = 0.25;
-      const regenEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationLossM) * regenEfficiency) / 3600;
+      // 3. Récupération KERS en descente (~20% de l'énergie potentielle restituée)
+      const regenEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationLossM) * 0.20) / 3600;
 
       // 4. Énergie nette mécanique
       const netMechanicalWh = Math.max(1, flatEnergyWh + climbEnergyWh - regenEnergyWh);
 
-      // 5. Modélisation thermique de la batterie Lithium-Ion (Température Open-Meteo)
+      // 5. Modélisation thermique Lithium-Ion (Température Open-Meteo)
       const tempC = (this.weatherEngine && this.weatherEngine.currentWeather && this.weatherEngine.currentWeather.tempC !== undefined) 
-        ? this.weatherEngine.currentWeather.tempC : 19;
+        ? this.weatherEngine.currentWeather.tempC : 20;
       
       let thermalFactor = 1.0;
       let thermalLabel = `🌡️ ${tempC}°C • Rendement optimal`;
 
       if (tempC <= -5) {
-        thermalFactor = 0.68; // -32% perte grand froid
-        thermalLabel = `❄️ Grand Froid (${tempC}°C) : -32% d'autonomie`;
-      } else if (tempC < 5) {
-        thermalFactor = 0.78 + (tempC - (-5)) * 0.01; // -22%
-        thermalLabel = `❄️ Froid Hivernal (${tempC}°C) : -22% d'autonomie`;
-      } else if (tempC < 15) {
-        thermalFactor = 0.88 + (tempC - 5) * 0.012; // -12%
-        thermalLabel = `⛅ Frais (${tempC}°C) : -10% d'autonomie`;
+        thermalFactor = 0.75; // -25% grand froid
+        thermalLabel = `❄️ Grand Froid (${tempC}°C) : -25% d'autonomie`;
+      } else if (tempC < 8) {
+        thermalFactor = 0.85 + (tempC - (-5)) * 0.008; // ~ -15%
+        thermalLabel = `❄️ Froid Hivernal (${tempC}°C) : -15% d'autonomie`;
+      } else if (tempC < 16) {
+        thermalFactor = 0.93 + (tempC - 8) * 0.009; // ~ -7%
+        thermalLabel = `⛅ Frais (${tempC}°C) : -7% d'autonomie`;
       } else if (tempC <= 30) {
         thermalFactor = 1.0;
         thermalLabel = `☀️ Idéal (${tempC}°C) : 100% nominal`;
       } else {
-        thermalFactor = 0.94; // Forte chaleur
-        thermalLabel = `🔥 Canicule (${tempC}°C) : risque d'échauffement`;
+        thermalFactor = 0.95;
+        thermalLabel = `🔥 Forte chaleur (${tempC}°C) : perte légère`;
       }
 
       const totalWhUsed = Math.max(1, netMechanicalWh / thermalFactor);
@@ -534,10 +540,10 @@
       const consumedPct = Math.min(100, Math.max(1, Math.round((totalWhUsed / fullCapacityWh) * 100)));
       const remainingPct = Math.max(0, 100 - consumedPct);
 
-      // Temps estimé pour recharger les Wh dépensés sur prise 230V standard (chargeur ~350W)
-      const rechargeTimeMin = Math.max(5, Math.round((totalWhUsed / 350) * 60));
-      const avgConsumptionPerKm = totalWhUsed / (distanceKm || 1);
-      const remainingRangeKm = ((remainingPct / 100) * fullCapacityWh / (avgConsumptionPerKm || 17)).toFixed(1);
+      // Temps estimé pour recharger les Wh dépensés sur prise 230V standard
+      const rechargeTimeMin = Math.max(5, Math.round((totalWhUsed / 280) * 60));
+      const avgConsumptionPerKm = parseFloat((totalWhUsed / (distanceKm || 1)).toFixed(1));
+      const remainingRangeKm = ((remainingPct / 100) * fullCapacityWh / (avgConsumptionPerKm || 13)).toFixed(1);
 
       return {
         consumedPct,
@@ -1755,27 +1761,23 @@
       const tileOpts = { maxZoom: 20, crossOrigin: true };
 
       this.tileLayers = {
-        waze: L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { ...tileOpts, subdomains: 'abcd', maxZoom: 20 }),
+        waze: L.tileLayer('https://{s}.tile.openstreetmap.fr/hot/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 19 }),
         osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { ...tileOpts, maxZoom: 19 }),
         cyclosm: L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 20 }),
         streets: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
         opentopo: L.tileLayer('https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', { ...tileOpts, maxZoom: 17 }),
         ign: L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', { ...tileOpts, maxZoom: 19 }),
         satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
-        night: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { ...tileOpts, subdomains: 'abcd', maxZoom: 19 })
+        night: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Dark_Gray_Base/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 })
       };
 
-      // Verified Cycleways Overlay Tiles (CyclOSM)
-      this.cyclewaysOverlay = L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', {
-        ...tileOpts,
-        subdomains: 'abc',
-        maxZoom: 20,
-        opacity: 0.85
-      });
+      // Verified Cycleways Overlay (vector layer for green corridors)
       this.isVerifiedCyclewaysEnabled = true;
 
-      this.tileLayers.waze.addTo(this.map);
-      this.cyclewaysOverlay.addTo(this.map); // Active by default for verified bike lanes
+      // Restore saved map layer or default to Waze
+      const savedLayer = localStorage.getItem('trottiwaze_map_layer') || 'waze';
+      this.currentLayerId = this.tileLayers[savedLayer] ? savedLayer : 'waze';
+      this.tileLayers[this.currentLayerId].addTo(this.map);
       
       // Initialize Vector High-Visibility Layer for Guaranteed Certified Cycle Corridors
       this.initVerifiedCyclewaysVectorLayer();
@@ -1889,9 +1891,6 @@
       this.tileLayers[layerId].addTo(this.map);
       this.currentLayerId = layerId;
 
-      if (this.isVerifiedCyclewaysEnabled && this.cyclewaysOverlay) {
-        this.cyclewaysOverlay.bringToFront();
-      }
       if (this.isVerifiedCyclewaysEnabled && this.verifiedTracksGroup) {
         this.verifiedTracksGroup.bringToFront();
       }
@@ -1899,14 +1898,14 @@
       this.map.invalidateSize();
 
       const names = {
-        waze: 'Style Waze Cartoon HD (Carto)',
+        waze: 'Style Cartoon Dessin Animé HD (OSM Pastel)',
         osm: 'OpenStreetMap Standard',
         cyclosm: 'CyclOSM Pistes Cyclables',
         streets: 'Style GPS Urbain (Esri)',
         opentopo: 'OpenTopoMap Relief & Dénivelé HD',
         ign: 'Plan IGN France Officiel (GEOPF)',
         satellite: 'Vue Satellite Réelle HD',
-        night: 'Mode Nuit OLED'
+        night: 'Mode Nuit Épuré (Dark Canvas)'
       };
       return names[layerId] || layerId;
     }
@@ -2048,35 +2047,9 @@
       const results = [];
       const seen = new Set();
 
-      // 0. Match Verified Cycleways Catalog FIRST (Priorité Pistes Sûres)
-      if (typeof VERIFIED_CYCLEWAYS_CATALOG !== 'undefined') {
-        VERIFIED_CYCLEWAYS_CATALOG.forEach(track => {
-          const matchName = track.name.toLowerCase().includes(clean);
-          const matchCity = track.city.toLowerCase().includes(clean) || (track.cityLabel && track.cityLabel.toLowerCase().includes(clean));
-          const matchDesc = track.description && track.description.toLowerCase().includes(clean);
-          const matchPiste = (clean.includes('piste') || clean.includes('voie') || clean.includes('canal') || clean.includes('quai') || clean.includes('berges') || clean.includes('rev')) && (matchName || matchCity);
-
-          if (matchName || matchCity || matchDesc || matchPiste) {
-            const key = `cycleway_${track.id}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              results.push({
-                mainText: track.name,
-                subText: `🛡️ ${track.tag} • ${track.city} (${track.lengthKm} km)`,
-                fullLabel: `${track.name}, ${track.city}`,
-                lat: track.lat,
-                lng: track.lng,
-                isVerifiedCycleway: true,
-                trackId: track.id
-              });
-            }
-          }
-        });
-      }
-
-      // 1. Try French National Address API (BAN - Data.gouv)
+      // 1. French National Address & City API (BAN - Data.gouv) - Priority 1
       try {
-        const banUrl = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=6&autocomplete=1`;
+        const banUrl = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=7&autocomplete=1`;
         const res = await fetch(banUrl);
         if (res.ok) {
           const data = await res.json();
@@ -2086,12 +2059,14 @@
               const full = props.label;
               if (!seen.has(full.toLowerCase())) {
                 seen.add(full.toLowerCase());
+                const isCity = props.type === 'municipality';
                 results.push({
-                  mainText: props.name || props.label,
-                  subText: props.context || `${props.postcode || ''} ${props.city || ''}`,
+                  mainText: isCity ? (props.city || props.name) : props.name,
+                  subText: isCity ? `${props.postcode || ''} • Ville` : `${props.postcode || ''} ${props.city || ''} (${props.context || ''})`,
                   fullLabel: props.label,
                   lat: f.geometry.coordinates[1],
                   lng: f.geometry.coordinates[0],
+                  icon: isCity ? '🏙️' : '📍',
                   isVerifiedCycleway: false
                 });
               }
@@ -2100,7 +2075,33 @@
         }
       } catch (e) {}
 
-      // 2. Fallback to OpenStreetMap Nominatim
+      // 2. If user specifically types "piste", "canal", "voie", or exact cycle track name, search catalog
+      const wantsCycleway = clean.includes('piste') || clean.includes('voie') || clean.includes('canal') || clean.includes('berges') || clean.includes('quai');
+      if (typeof VERIFIED_CYCLEWAYS_CATALOG !== 'undefined' && (wantsCycleway || results.length < 2)) {
+        VERIFIED_CYCLEWAYS_CATALOG.forEach(track => {
+          const matchName = track.name.toLowerCase().includes(clean);
+          const matchCity = track.city.toLowerCase().includes(clean);
+
+          if (matchName || (wantsCycleway && matchCity)) {
+            const key = `cycleway_${track.id}`;
+            if (!seen.has(key)) {
+              seen.add(key);
+              results.push({
+                mainText: track.name,
+                subText: `🛡️ Piste sûre • ${track.city} (${track.lengthKm} km)`,
+                fullLabel: `${track.name}, ${track.city}`,
+                lat: track.lat,
+                lng: track.lng,
+                icon: '🛡️',
+                isVerifiedCycleway: true,
+                trackId: track.id
+              });
+            }
+          }
+        });
+      }
+
+      // 3. Fallback to OpenStreetMap Nominatim for POIs or cross-border cities
       if (results.length < 3) {
         try {
           const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=fr,be,ch`;
@@ -2116,6 +2117,7 @@
                   fullLabel: item.display_name,
                   lat: parseFloat(item.lat),
                   lng: parseFloat(item.lon),
+                  icon: item.type === 'city' || item.type === 'administrative' ? '🏙️' : '📍',
                   isVerifiedCycleway: false
                 });
               }
@@ -2143,173 +2145,240 @@
     async calculateRoutes(startCoords, endCoords) {
       const sLat = startCoords.lat, sLng = startCoords.lng;
       const eLat = endCoords.lat, eLng = endCoords.lng;
-      const cacheKey = `${sLat.toFixed(5)},${sLng.toFixed(5)}_${eLat.toFixed(5)},${eLng.toFixed(5)}`;
 
-      let osrmBase = null;
-
-      // 1. Fetch real road geometry from OpenStreetMap Bike Router
-      const osrmEndpoints = [
-        `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`,
-        `https://router.project-osrm.org/route/v1/bike/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`,
-        `https://router.project-osrm.org/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`
-      ];
-
-      for (const endpoint of osrmEndpoints) {
+      const fetchWithTimeout = async (url, ms = 3500) => {
         try {
-          const res = await fetch(endpoint);
-          if (res.ok) {
-            const json = await res.json();
-            if (json.routes && json.routes.length > 0 && json.routes[0].geometry) {
-              osrmBase = json.routes[0];
-              break;
-            }
-          }
+          const controller = new AbortController();
+          const timer = setTimeout(() => controller.abort(), ms);
+          const res = await fetch(url, { signal: controller.signal });
+          clearTimeout(timer);
+          if (!res.ok) return null;
+          return await res.json();
         } catch (e) {
-          // try next endpoint
-        }
-      }
-
-      return this.buildTrottiRoutes(startCoords, endCoords, osrmBase);
-    }
-
-    buildTrottiRoutes(start, end, osrmBase = null) {
-      let baseCoords = [];
-      let baseDistanceKm = 0;
-      let baseSteps = [];
-
-      if (osrmBase && osrmBase.geometry && osrmBase.geometry.coordinates) {
-        // Real road coordinates from OSRM: convert [lng, lat] to Leaflet [lat, lng]
-        baseCoords = osrmBase.geometry.coordinates.map(c => [c[1], c[0]]);
-        baseDistanceKm = parseFloat((osrmBase.distance / 1000).toFixed(2));
-
-        if (osrmBase.legs && osrmBase.legs[0] && osrmBase.legs[0].steps) {
-          baseSteps = osrmBase.legs[0].steps.map(s => {
-            let mod = s.maneuver.modifier || 'straight';
-            if (s.maneuver.type === 'arrive') mod = 'arrive';
-            return {
-              instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (s.name ? `Prenez ${s.name}` : 'Continuez tout droit'),
-              distanceMeters: Math.round(s.distance),
-              street: s.name || 'Voie cyclable sécurisée',
-              modifier: mod,
-              safety: '🟢 Piste cyclable protégée'
-            };
-          });
-        }
-      }
-
-      // Offline / fallback: generate realistic street grid segments with 90° turns instead of straight lines
-      if (baseCoords.length === 0) {
-        const generated = this.generateRealisticGridRoute(start, end);
-        baseCoords = generated.coords;
-        baseDistanceKm = generated.distanceKm;
-        baseSteps = generated.steps;
-      }
-
-      const speed = this.batteryEngine.config.speedPrefKmh || 25;
-
-      const safeDist = parseFloat((baseDistanceKm * 1.05).toFixed(1));
-      const fastDist = parseFloat((baseDistanceKm * 0.95).toFixed(1));
-      const ecoDist = parseFloat((baseDistanceKm * 1.10).toFixed(1));
-      const natureDist = parseFloat((baseDistanceKm * 1.20).toFixed(1));
-
-      return {
-        safe: {
-          title: 'Sécurisé (Pistes Protégées)',
-          mode: 'safe',
-          distanceKm: safeDist,
-          durationMin: Math.max(1, Math.round((safeDist / speed) * 60)),
-          protectedPct: 94,
-          praticability: '✨ 100% Voie cyclable séparée',
-          cobblestonesCount: 0,
-          elevationGainM: 12,
-          elevationLossM: 10,
-          maxSlopePct: 3,
-          coordinates: baseCoords,
-          steps: baseSteps.length > 0 ? baseSteps : [
-            { distanceMeters: 250, street: 'Piste cyclable protégée', modifier: 'straight', instruction: 'Suivre la piste cyclable', safety: '🟢 Voie bidirectionnelle' },
-            { distanceMeters: 100, street: 'Arrivée', modifier: 'arrive', instruction: 'Arrivée à destination', safety: '🏁 Point d\'arrivée' }
-          ]
-        },
-        fast: {
-          title: 'Direct & Rapide',
-          mode: 'fast',
-          distanceKm: fastDist,
-          durationMin: Math.max(1, Math.round((fastDist / speed) * 60)),
-          protectedPct: 62,
-          praticability: this.filters.avoidCobblestones ? '✨ Bitumé' : '⚠️ 1 section pavée',
-          cobblestonesCount: this.filters.avoidCobblestones ? 0 : 1,
-          elevationGainM: 18,
-          elevationLossM: 16,
-          maxSlopePct: 5,
-          coordinates: baseCoords,
-          steps: baseSteps
-        },
-        eco: {
-          title: 'Économie Batterie (Plat)',
-          mode: 'eco',
-          distanceKm: ecoDist,
-          durationMin: Math.max(1, Math.round((ecoDist / speed) * 60)),
-          protectedPct: 88,
-          praticability: '✨ Pente douce < 2%',
-          cobblestonesCount: 0,
-          elevationGainM: 5,
-          elevationLossM: 4,
-          maxSlopePct: 2,
-          coordinates: baseCoords,
-          steps: baseSteps
-        },
-        nature: {
-          title: 'Parcs & Canaux',
-          mode: 'nature',
-          distanceKm: natureDist,
-          durationMin: Math.max(1, Math.round((natureDist / speed) * 60)),
-          protectedPct: 98,
-          praticability: '🌳 Voies vertes & berges',
-          cobblestonesCount: 0,
-          elevationGainM: 8,
-          elevationLossM: 7,
-          maxSlopePct: 2.5,
-          coordinates: baseCoords,
-          steps: baseSteps
+          return null;
         }
       };
+
+      // 1. Fetch car / paved arterial routes (100% paved roadway, zero dirt paths)
+      const fetchCarDirect = async () => {
+        const endpoints = [
+          `https://router.project-osrm.org/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true&alternatives=3`,
+          `https://routing.openstreetmap.de/routed-car/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true&alternatives=true`
+        ];
+        for (const url of endpoints) {
+          const data = await fetchWithTimeout(url, 3200);
+          if (data && data.routes && data.routes.length > 0) {
+            return data.routes;
+          }
+        }
+        return [];
+      };
+
+      // 2. Fetch bike routes with cycleways and greenways
+      const fetchBikeWithAlternatives = async () => {
+        const endpoints = [
+          `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true&alternatives=true`,
+          `https://router.project-osrm.org/route/v1/bike/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true&alternatives=true`
+        ];
+        for (const url of endpoints) {
+          const data = await fetchWithTimeout(url, 3200);
+          if (data && data.routes && data.routes.length > 0) {
+            return data.routes;
+          }
+        }
+        return [];
+      };
+
+      // Parallel execution with strict timeout fallback (vehicular/scooter road & cycle profiles only)
+      const [carRoutes, bikeRoutes] = await Promise.all([
+        fetchCarDirect(),
+        fetchBikeWithAlternatives()
+      ]);
+
+      return this.buildTrottiRoutes(startCoords, endCoords, bikeRoutes, carRoutes);
     }
 
-    generateRealisticGridRoute(start, end) {
-      const coords = [];
+    _parseOSRM(osrmRoute) {
+      if (osrmRoute && osrmRoute.geometry && osrmRoute.geometry.coordinates) {
+        // Leaflet requires [lat, lng], OSRM GeoJSON provides [lng, lat]
+        const coords = osrmRoute.geometry.coordinates.map(c => [c[1], c[0]]);
+        const distanceKm = parseFloat((osrmRoute.distance / 1000).toFixed(2));
+        const steps = osrmRoute.legs ? osrmRoute.legs.flatMap(leg => (leg.steps || []).map(s => ({
+          instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (s.name ? `Prenez ${s.name}` : 'Continuez tout droit'),
+          distanceMeters: Math.round(s.distance),
+          street: s.name || 'Voie aménagée',
+          modifier: s.maneuver.modifier || (s.maneuver.type === 'arrive' ? 'arrive' : 'straight'),
+          safety: '🟢 Voie cyclable'
+        }))) : [];
+        return { coords, distanceKm, steps };
+      }
+      return null;
+    }
+
+    _isUnpavedOrDirt(steps) {
+      if (!steps || steps.length === 0) return false;
+      // Strictly detect unpaved dirt / mud / gravel surfaces, never ordinary street names like 'Chemin des Dames'
+      const dirtPattern = /\b(terre|boue|mud|dirt|gravier|gravillons|non[- ]?goudronn|non[- ]?bitum|sentier[- ]?de[- ]?terre|chemin[- ]?de[- ]?terre|piste[- ]?de[- ]?terre)\b/i;
+      return steps.some(s => {
+        const txt = `${s.street || ''} ${s.instruction || ''}`;
+        return dirtPattern.test(txt);
+      });
+    }
+
+    buildTrottiRoutes(start, end, bikeRoutes = [], carRoutes = []) {
+      const speed = this.batteryEngine.config.speedPrefKmh || 25;
+      const straightKm = this.computeDistanceKm(start.lat, start.lng, end.lat, end.lng);
+      const avoidDirt = !!this.filters.avoidDirtPaths;
+
+      // 1. Collect all valid candidate routes from road network engines
+      const candidates = [];
+      const addCandidate = (osrmRoute, defaultMode, title, isGuaranteedPaved = false) => {
+        if (!osrmRoute) return;
+        const parsed = this._parseOSRM(osrmRoute);
+        if (!parsed || !parsed.coords || parsed.coords.length < 2) return;
+        
+        // If user wants ONLY paved roads: car routes are always 100% asphalt by definition.
+        // For bike routes, reject if unpaved dirt/gravel was detected.
+        if (avoidDirt && !isGuaranteedPaved && this._isUnpavedOrDirt(parsed.steps)) {
+          return;
+        }
+
+        candidates.push({
+          data: parsed,
+          mode: defaultMode,
+          title,
+          isPaved: isGuaranteedPaved || !this._isUnpavedOrDirt(parsed.steps)
+        });
+      };
+
+      // Priority 1: Direct Car Route (100% asphalt / major arteries without dead-ends or dirt)
+      if (Array.isArray(carRoutes) && carRoutes.length > 0) {
+        carRoutes.forEach((cr, i) => {
+          addCandidate(cr, i === 0 ? 'fast' : 'eco', i === 0 ? '⚡ Direct & Rapide' : '🔋 Alternative Chaussée', true);
+        });
+      } else if (carRoutes && !Array.isArray(carRoutes)) {
+        addCandidate(carRoutes, 'fast', '⚡ Direct & Rapide', true);
+      }
+
+      // Priority 2: Bike routes (tested for dirt paths if filter is enabled)
+      if (bikeRoutes && bikeRoutes.length > 0) {
+        bikeRoutes.forEach((br, idx) => {
+          addCandidate(br, idx === 0 ? 'safe' : 'eco', idx === 0 ? '🟢 Sécurisé (Pistes)' : '🔋 Éco & Pistes Douces');
+        });
+      }
+
+      // 2. Strict Deduplication: filter out routes that follow effectively the same path
+      const uniqueCandidates = [];
+      for (const cand of candidates) {
+        const candDist = cand.data.distanceKm;
+        const isDuplicate = uniqueCandidates.some(existing => {
+          const distDiff = Math.abs(existing.data.distanceKm - candDist);
+          // If total distance differs by less than 80 meters, check if mid-point is also identical
+          if (distDiff < 0.08) {
+            const midIndexA = Math.floor(existing.data.coords.length / 2);
+            const midIndexB = Math.floor(cand.data.coords.length / 2);
+            const ptA = existing.data.coords[midIndexA];
+            const ptB = cand.data.coords[midIndexB];
+            if (ptA && ptB) {
+              const midDist = this.computeDistanceKm(ptA[0], ptA[1], ptB[0], ptB[1]);
+              return midDist < 0.08; // Identical path
+            }
+            return true;
+          }
+          return false;
+        });
+
+        if (!isDuplicate) {
+          uniqueCandidates.push(cand);
+        }
+        if (uniqueCandidates.length >= 3) break; // Maximum 3 routes
+      }
+
+      // 3. Fallback only if offline / no server answered (generate orthogonal street-following grid)
+      if (uniqueCandidates.length === 0) {
+        const fallback = this.generateRealisticGridRoute(start, end, 1.25);
+        uniqueCandidates.push({
+          data: fallback,
+          mode: 'safe',
+          title: '🟢 Voie Bitumée',
+          isPaved: true
+        });
+      }
+
+      // 4. Map to Fast, Safe, Eco modes (strictly 1, 2, or 3 routes based on availability)
+      const routesResult = {};
+      const modeKeys = ['fast', 'safe', 'eco'];
+
+      uniqueCandidates.forEach((cand, idx) => {
+        const mode = modeKeys[idx] || `route_${idx + 1}`;
+        const distKm = parseFloat(cand.data.distanceKm.toFixed(2));
+        const gainM = mode === 'fast' ? Math.max(8, Math.round(straightKm * 3.5)) :
+                     mode === 'safe' ? Math.max(4, Math.round(straightKm * 2.0)) :
+                     Math.max(2, Math.round(straightKm * 0.7));
+        const lossM = Math.max(2, Math.round(gainM * 0.9));
+        const slope = mode === 'fast' ? 4.2 : mode === 'safe' ? 2.5 : 1.1;
+        
+        // Realistic calibrated scooter cruising speeds:
+        // - Fast: nominal top speed (e.g. 25 km/h)
+        // - Safe: ~88% of top speed for relaxed cycleway navigation (e.g. 22 km/h)
+        // - Eco: ~80% of top speed for optimal energy saving (e.g. 20 km/h)
+        const modeSpeed = mode === 'fast' ? speed :
+                          mode === 'safe' ? Math.max(16, Math.round(speed * 0.88)) :
+                          Math.max(15, Math.round(speed * 0.80));
+
+        let modeTitle = cand.title;
+        if (idx === 0) modeTitle = '⚡ Direct & Rapide';
+        if (idx === 1) modeTitle = '🟢 Sécurisé (Pistes)';
+        if (idx === 2) modeTitle = '🔋 Éco & Plat';
+
+        routesResult[mode] = {
+          title: modeTitle,
+          mode: mode,
+          distanceKm: distKm,
+          durationMin: Math.max(1, Math.round((distKm / modeSpeed) * 60)),
+          protectedPct: mode === 'safe' ? 92 : mode === 'eco' ? 86 : 58,
+          praticability: avoidDirt ? '✨ 100% Goudronné (Aucun chemin)' : (this.filters.avoidCobblestones ? '✨ Grands axes bitumés' : '✨ Route praticable'),
+          cobblestonesCount: 0,
+          elevationGainM: gainM,
+          elevationLossM: lossM,
+          maxSlopePct: slope,
+          cruisingSpeedKmh: modeSpeed,
+          coordinates: cand.data.coords, // Full array of real street turns & vertices
+          steps: cand.data.steps
+        };
+      });
+
+      return routesResult;
+    }
+
+    generateRealisticGridRoute(start, end, factor = 1.25) {
+      // Orthogonal Manhattan city street simulation with realistic turns (fallback only)
       const lat1 = start.lat, lng1 = start.lng;
       const lat2 = end.lat, lng2 = end.lng;
+      const corner1Lat = lat2;
+      const corner1Lng = lng1;
 
-      // Realistic urban street grid with orthogonal road turns (Manhattan grid)
-      const numSegments = 16;
-      coords.push([lat1, lng1]);
-
-      const midLat = lat1 + (lat2 - lat1) * 0.45;
-      const midLng = lng1 + (lng2 - lng1) * 0.55;
-
-      for (let i = 1; i <= 6; i++) {
-        const t = i / 6;
-        coords.push([lat1 + (midLat - lat1) * t, lng1 + Math.sin(t * Math.PI) * 0.0004]);
+      const coords = [];
+      const stepsCount = 18;
+      // Leg 1: along longitude
+      for (let i = 0; i <= stepsCount; i++) {
+        const t = i / stepsCount;
+        coords.push([lat1 + (corner1Lat - lat1) * t, lng1]);
       }
-      for (let i = 1; i <= 6; i++) {
-        const t = i / 6;
-        coords.push([midLat + Math.cos(t * Math.PI) * 0.0003, lng1 + (midLng - lng1) * t]);
+      // Leg 2: along latitude
+      for (let i = 1; i <= stepsCount; i++) {
+        const t = i / stepsCount;
+        coords.push([corner1Lat, lng1 + (lng2 - corner1Lng) * t]);
       }
-      for (let i = 1; i <= 6; i++) {
-        const t = i / 6;
-        coords.push([midLat + (lat2 - midLat) * t, midLng + (lng2 - midLng) * t]);
-      }
-      coords.push([lat2, lng2]);
 
-      const distKm = parseFloat((this.computeDistanceKm(lat1, lng1, lat2, lng2) * 1.25).toFixed(1));
+      const rawDist = this.computeDistanceKm(lat1, lng1, lat2, lng2);
+      const distanceKm = parseFloat((rawDist * factor).toFixed(2));
       const steps = [
-        { distanceMeters: 300, street: 'Piste cyclable urbaine', modifier: 'straight', instruction: 'Tout droit sur la piste', safety: '🟢 Voie propre' },
-        { distanceMeters: 450, street: 'Axe transversal', modifier: 'right', instruction: 'Tournez à droite', safety: '🟢 Bande cyclable' },
-        { distanceMeters: 200, street: 'Rue de destination', modifier: 'left', instruction: 'Tournez à gauche', safety: '🟡 Zone 30' },
+        { distanceMeters: Math.round(distanceKm * 500), street: 'Chaussée bitumée', modifier: 'straight', instruction: 'Continuez tout droit sur la route goudronnée', safety: '🟢 Chaussée lisse' },
+        { distanceMeters: Math.round(distanceKm * 450), street: 'Avenue urbaine', modifier: 'right', instruction: 'Tournez à droite sur l\'avenue', safety: '🟢 Route goudronnée' },
         { distanceMeters: 50, street: 'Arrivée', modifier: 'arrive', instruction: 'Vous êtes arrivé !', safety: '🏁 Fin de trajet' }
       ];
-
-      return { coords, distanceKm: distKm, steps };
+      return { coords, distanceKm, steps };
     }
 
     computeDistanceKm(lat1, lon1, lat2, lon2) {
@@ -2320,7 +2389,8 @@
       const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
       return R * c;
     }
-  }
+  } // ← end RoutingEngine
+
 
   // =========================================================================
   // 12. Navigation Engine
@@ -2764,7 +2834,7 @@
       this.hazardManager = new HazardManager(this.mapManager);
       this.cockpitHUD = new CockpitHUDManager(this);
 
-      this.selectedRouteMode = 'safe';
+      this.selectedRouteMode = 'fast';
       this.calculatedRoutes = null;
       this.selectedStartCoords = null;
       this.selectedEndCoords = null;
@@ -2794,6 +2864,7 @@
       this.elRoutePanel = document.getElementById('route-panel');
       this.elExpandableContent = document.getElementById('panel-expandable-content');
       this.elStickyLaunchBar = document.getElementById('sticky-launch-bar');
+      this.elWazeRouteSheet = document.getElementById('waze-route-sheet');
       this.elLiveRecordingHud = document.getElementById('live-recording-hud');
 
       this.elStartInput = document.getElementById('start-input');
@@ -3373,6 +3444,13 @@
         this.elSettingsModal.style.display = 'none';
         this.mapManager.map.invalidateSize();
       });
+      // Close settings modal when clicking anywhere on the backdrop outside the card
+      this.elSettingsModal.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-card')) {
+          this.elSettingsModal.style.display = 'none';
+          this.mapManager.map.invalidateSize();
+        }
+      });
 
       // Compass & Map Rotation Button
       const compassBtn = document.getElementById('btn-compass-mode');
@@ -3486,6 +3564,7 @@
 
       // Map Layer Selection (Volet 3)
       document.querySelectorAll('.map-layer-option').forEach(opt => {
+        opt.classList.toggle('active', opt.getAttribute('data-layer-id') === this.mapManager.currentLayerId);
         opt.addEventListener('click', () => {
           document.querySelectorAll('.map-layer-option').forEach(o => o.classList.remove('active'));
           opt.classList.add('active');
@@ -3542,6 +3621,12 @@
 
       document.getElementById('btn-close-auth').addEventListener('click', () => {
         this.elAuthModal.style.display = 'none';
+      });
+      // Close auth modal when clicking anywhere on the backdrop outside the card
+      this.elAuthModal.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-card')) {
+          this.elAuthModal.style.display = 'none';
+        }
       });
 
       document.querySelectorAll('.auth-tab-btn').forEach(btn => {
@@ -3838,6 +3923,14 @@
         });
       }
 
+      if (modalPark) {
+        modalPark.addEventListener('click', (e) => {
+          if (!e.target.closest('.modal-card')) {
+            modalPark.style.display = 'none';
+          }
+        });
+      }
+
       if (btnConfirmPark) {
         btnConfirmPark.addEventListener('click', () => {
           const loc = this.mapManager.currentLocation;
@@ -3907,8 +4000,10 @@
         this.selectedEndCoords = null;
         this.calculatedRoutes = null;
         this.mapManager.clearRoute();
-        this.elExpandableContent.style.display = 'none';
-        this.elStickyLaunchBar.style.display = 'none';
+        if (this.elExpandableContent) this.elExpandableContent.style.display = 'none';
+        if (this.elStickyLaunchBar) this.elStickyLaunchBar.style.display = 'none';
+        if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
+        if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
         this.elEndInput.focus();
       });
 
@@ -3923,10 +4018,21 @@
         if (this.elEndInput.value.trim().length > 0) this.calculateCurrentRoute();
       });
 
-      // Route Cards Selection
-      document.querySelectorAll('.route-card').forEach(card => {
+      // Waze Route Sheet Toggle (Minimize / Expand)
+      const btnToggleSheet = document.getElementById('btn-toggle-route-sheet');
+      const sheetToggleBar = document.getElementById('waze-sheet-toggle');
+      const toggleSheetFn = () => {
+        if (!this.elWazeRouteSheet) return;
+        const isCollapsed = this.elWazeRouteSheet.classList.toggle('sheet-collapsed');
+        if (btnToggleSheet) btnToggleSheet.textContent = isCollapsed ? '▲' : '▼';
+      };
+      if (btnToggleSheet) btnToggleSheet.addEventListener('click', (e) => { e.stopPropagation(); toggleSheetFn(); });
+      if (sheetToggleBar) sheetToggleBar.addEventListener('click', toggleSheetFn);
+
+      // Route Cards Selection (Waze style — 3 cards)
+      document.querySelectorAll('.route-card-waze').forEach(card => {
         card.addEventListener('click', () => {
-          document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
+          document.querySelectorAll('.route-card-waze').forEach(c => c.classList.remove('active'));
           card.classList.add('active');
           this.selectedRouteMode = card.getAttribute('data-mode');
           this.applySelectedRoute();
@@ -3947,6 +4053,12 @@
       // Report Hazard Flow
       this.elReportFab.addEventListener('click', () => this.openReportModal());
       document.getElementById('btn-close-report').addEventListener('click', () => { this.elReportModal.style.display = 'none'; });
+      // Close report modal when clicking anywhere on the backdrop outside the card
+      this.elReportModal.addEventListener('click', (e) => {
+        if (!e.target.closest('.modal-card')) {
+          this.elReportModal.style.display = 'none';
+        }
+      });
       document.querySelectorAll('.hazard-choice-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.hazard-choice-btn').forEach(b => b.classList.remove('selected'));
@@ -3972,6 +4084,14 @@
       if (btnCloseCycleways) {
         btnCloseCycleways.addEventListener('click', () => {
           if (this.elCyclewaysModal) this.elCyclewaysModal.style.display = 'none';
+        });
+      }
+      // Close cycleways modal when clicking anywhere on the backdrop outside the card
+      if (this.elCyclewaysModal) {
+        this.elCyclewaysModal.addEventListener('click', (e) => {
+          if (!e.target.closest('.modal-card')) {
+            this.elCyclewaysModal.style.display = 'none';
+          }
         });
       }
 
@@ -4083,66 +4203,92 @@
 
     setupAutocomplete(inputEl, suggestionsEl, onSelectCallback) {
       let debounceTimer = null;
+      const wrapperEl = inputEl.closest('.input-row-wrapper');
 
-      const showShortcuts = () => {
-        const userLoc = this.mapManager.currentLocation || { lat: 48.8531, lng: 2.3698 };
-        const nearestTracks = this.routingEngine.getNearestCycleways(userLoc.lat, userLoc.lng, 3);
-        if (nearestTracks.length === 0) return;
+      const closeDropdown = () => {
+        suggestionsEl.style.display = 'none';
+        if (wrapperEl) wrapperEl.classList.remove('active-autocomplete');
+        if (this.elRoutePanel) this.elRoutePanel.classList.remove('has-suggestions');
+      };
+
+      const openDropdown = () => {
+        suggestionsEl.style.display = 'block';
+        if (wrapperEl) wrapperEl.classList.add('active-autocomplete');
+        if (this.elRoutePanel) this.elRoutePanel.classList.add('has-suggestions');
+      };
+
+      // Show ONLY past recent searches on focus when input is empty (per user request)
+      const showRecentSearches = () => {
+        const recents = (this.historyManager && this.historyManager.recents) || [];
+        if (recents.length === 0) {
+          closeDropdown();
+          return;
+        }
 
         suggestionsEl.innerHTML = `
-          <div style="padding: 6px 10px; font-size: 10px; font-weight: 800; color: #10b981; text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid rgba(255,255,255,0.06);">
-            🛡️ Pistes cyclables 100% sûres à proximité
+          <div style="padding: 7px 10px; font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.6px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
+            <span>🕒 Recherches récentes</span>
+            <span style="font-size: 9px; color: #64748b;">${recents.length} sauvegardée(s)</span>
           </div>
         `;
-        nearestTracks.forEach(t => {
-          const item = document.createElement('div');
-          item.className = 'suggestion-item verified-cycleway';
-          item.innerHTML = `
-            <span class="sugg-icon">🛡️</span>
+
+        recents.forEach(item => {
+          const div = document.createElement('div');
+          div.className = 'suggestion-item recent-search-item';
+          div.innerHTML = `
+            <span class="sugg-icon">🕒</span>
             <div class="sugg-text">
               <div class="sugg-main-row">
-                <span class="sugg-main">${t.name}</span>
-                <span class="sugg-verified-badge">Piste Sûre</span>
+                <span class="sugg-main">${item.mainText || item.fullLabel}</span>
               </div>
-              <span class="sugg-sub">📍 ${t.city} • ${t.distanceToUserKm} km • ${t.tag}</span>
+              <span class="sugg-sub">${item.subText || ''}</span>
             </div>
           `;
-          item.addEventListener('click', () => {
-            suggestionsEl.style.display = 'none';
-            onSelectCallback({ lat: t.lat, lng: t.lng }, `${t.name}, ${t.city}`);
+          div.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeDropdown();
+            onSelectCallback({ lat: item.lat, lng: item.lng }, item.fullLabel);
           });
-          suggestionsEl.appendChild(item);
+          suggestionsEl.appendChild(div);
         });
-        suggestionsEl.style.display = 'block';
+
+        openDropdown();
       };
 
       inputEl.addEventListener('focus', () => {
         if (inputEl.value.trim().length === 0) {
-          showShortcuts();
+          showRecentSearches();
         }
       });
 
       inputEl.addEventListener('input', () => {
         clearTimeout(debounceTimer);
         const query = inputEl.value.trim();
+
         if (query.length < 2) {
-          showShortcuts();
+          if (query.length === 0) {
+            showRecentSearches();
+          } else {
+            closeDropdown();
+          }
           return;
         }
 
         debounceTimer = setTimeout(async () => {
           const results = await this.routingEngine.searchAddress(query);
           if (results.length === 0) {
-            suggestionsEl.style.display = 'none';
+            closeDropdown();
             return;
           }
+
           suggestionsEl.innerHTML = '';
           results.forEach(res => {
             const isVerified = res.isVerifiedCycleway;
+            const iconChar = res.icon || (isVerified ? '🛡️' : '📍');
             const item = document.createElement('div');
             item.className = `suggestion-item ${isVerified ? 'verified-cycleway' : ''}`;
             item.innerHTML = `
-              <span class="sugg-icon">${isVerified ? '🛡️' : '📍'}</span>
+              <span class="sugg-icon">${iconChar}</span>
               <div class="sugg-text">
                 <div class="sugg-main-row">
                   <span class="sugg-main">${res.mainText}</span>
@@ -4151,19 +4297,21 @@
                 <span class="sugg-sub">${res.subText}</span>
               </div>
             `;
-            item.addEventListener('click', () => {
-              suggestionsEl.style.display = 'none';
+            item.addEventListener('click', (e) => {
+              e.stopPropagation();
+              closeDropdown();
               onSelectCallback({ lat: res.lat, lng: res.lng }, res.fullLabel);
             });
             suggestionsEl.appendChild(item);
           });
-          suggestionsEl.style.display = 'block';
-        }, 250);
+
+          openDropdown();
+        }, 200);
       });
 
       document.addEventListener('click', (e) => {
         if (!inputEl.contains(e.target) && !suggestionsEl.contains(e.target)) {
-          suggestionsEl.style.display = 'none';
+          closeDropdown();
         }
       });
     }
@@ -4171,8 +4319,8 @@
     async calculateCurrentRoute() {
       const endVal = this.elEndInput.value.trim();
       if (!endVal) {
-        this.elExpandableContent.style.display = 'none';
-        this.elStickyLaunchBar.style.display = 'none';
+        if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
+        if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
         return;
       }
 
@@ -4194,31 +4342,75 @@
         this.chargingManager.fetchRealEVStations(endCoords.lat, endCoords.lng);
       }
 
-      this.elExpandableContent.style.display = 'block';
-      this.elStickyLaunchBar.style.display = 'flex';
+      if (this.elWazeRouteSheet) {
+        this.elWazeRouteSheet.style.display = 'flex';
+        this.elWazeRouteSheet.classList.remove('sheet-collapsed');
+      }
+      if (this.elRoutePanel) {
+        this.elRoutePanel.classList.add('panel-compact');
+      }
     }
 
     updateRouteCardsUI() {
       if (!this.calculatedRoutes) return;
-      Object.keys(this.calculatedRoutes).forEach(mode => {
+
+      const availableModes = Object.keys(this.calculatedRoutes);
+      if (availableModes.length === 0) return;
+
+      // If currently selected mode is no longer available, select the first available
+      if (!this.calculatedRoutes[this.selectedRouteMode]) {
+        this.selectedRouteMode = availableModes[0];
+      }
+
+      // Update and show/hide each Waze card dynamically
+      ['fast', 'safe', 'eco'].forEach(mode => {
+        const cardEl = document.querySelector(`.route-card-waze[data-mode="${mode}"]`);
         const r = this.calculatedRoutes[mode];
-        const card = document.querySelector(`.route-card[data-mode="${mode}"]`);
-        if (card) {
-          const timeEl = card.querySelector('.route-stat-time');
-          const metaEl = card.querySelector('.route-stat-meta');
-          const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5);
-          if (timeEl) timeEl.textContent = `${r.durationMin} min`;
-          if (metaEl) metaEl.textContent = `${r.distanceKm} km • ⚡ -${batt.consumedPct}% (${batt.whUsed} Wh)`;
+
+        if (!r) {
+          if (cardEl) cardEl.style.display = 'none';
+          return;
+        }
+
+        if (cardEl) {
+          cardEl.style.display = 'flex';
+          cardEl.classList.toggle('active', mode === this.selectedRouteMode);
+        }
+
+        const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5, r.cruisingSpeedKmh);
+        const timeEl = document.getElementById(`rcw-time-${mode}`);
+        const distEl = document.getElementById(`rcw-dist-${mode}`);
+        const climbEl = document.getElementById(`rcw-climb-${mode}`);
+        const pisteEl = document.getElementById(`rcw-piste-${mode}`);
+
+        if (timeEl) timeEl.textContent = `${r.durationMin} min`;
+        if (distEl) distEl.textContent = `${r.distanceKm} km`;
+        if (climbEl) climbEl.textContent = `↗ +${r.elevationGainM}m (${r.maxSlopePct}%)`;
+        if (pisteEl) {
+          pisteEl.textContent = `⚡ -${batt.consumedPct}% (${batt.whUsed} Wh)`;
         }
       });
     }
 
     applySelectedRoute() {
       if (!this.calculatedRoutes) return;
-      const r = this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes.safe;
+      const availableModes = Object.keys(this.calculatedRoutes);
+      if (availableModes.length === 0) return;
+
+      let r = this.calculatedRoutes[this.selectedRouteMode];
+      if (!r) {
+        this.selectedRouteMode = availableModes[0];
+        r = this.calculatedRoutes[this.selectedRouteMode];
+      }
+      if (!r) return;
+
+      // Update active highlight class on cards
+      document.querySelectorAll('.route-card-waze').forEach(c => {
+        c.classList.toggle('active', c.getAttribute('data-mode') === this.selectedRouteMode);
+      });
       this.mapManager.drawRoute(r.coordinates, this.selectedRouteMode);
 
-      const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5);
+      const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5, r.cruisingSpeedKmh);
 
       if (this.elLaunchButtonLabel) {
         this.elLaunchButtonLabel.textContent = `DÉMARRER (${r.durationMin} MIN • ${r.distanceKm} KM • -${batt.consumedPct}%)`;
@@ -4229,11 +4421,8 @@
 
       const elevSummary = document.getElementById('elev-gain-summary');
       if (elevSummary) {
-        elevSummary.textContent = `+${r.elevationGainM}m / -${r.elevationLossM}m • Montée : +${batt.climbWh} Wh | KERS : -${batt.regenWh} Wh`;
+        elevSummary.textContent = `${r.title} : +${r.elevationGainM}m montée (max ${r.maxSlopePct}%) • Conso ~${batt.whUsed} Wh • ${r.praticability}`;
       }
-
-      const elevEnd = document.getElementById('elev-end-dist');
-      if (elevEnd) elevEnd.textContent = `${r.distanceKm} km`;
 
       if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-${batt.consumedPct}%`;
       if (this.elBatteryArrival) this.elBatteryArrival.textContent = `⚡ Conso : ${batt.whUsed} Wh (🔌 ~${batt.rechargeTimeMin}m)`;
@@ -4252,9 +4441,13 @@
 
     beginTrip(isSimulated = false) {
       if (!this.calculatedRoutes) return;
-      const activeRoute = this.calculatedRoutes[this.selectedRouteMode];
-      this.elRoutePanel.style.display = 'none';
-      this.elStickyLaunchBar.style.display = 'none';
+      const modes = Object.keys(this.calculatedRoutes);
+      if (modes.length === 0) return;
+      const activeRoute = this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes[modes[0]];
+      if (!activeRoute) return;
+      if (this.elRoutePanel) this.elRoutePanel.style.display = 'none';
+      if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
+      if (this.elStickyLaunchBar) this.elStickyLaunchBar.style.display = 'none';
       this.elNavBanner.style.display = 'flex';
       if (isSimulated) this.elSimuController.style.display = 'flex';
       this.navigationEngine.startNavigation(activeRoute, isSimulated);
@@ -4262,13 +4455,13 @@
 
     endTrip() {
       this.navigationEngine.stopNavigation();
-      this.elRoutePanel.style.display = 'block';
+      if (this.elRoutePanel) this.elRoutePanel.style.display = 'block';
       this.elNavBanner.style.display = 'none';
       this.elSimuController.style.display = 'none';
       this.elHazardAlert.style.display = 'none';
       this.handleSpeedUpdate(0);
       if (this.elEndInput.value.trim().length > 0) {
-        this.elStickyLaunchBar.style.display = 'flex';
+        if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'flex';
       }
     }
 

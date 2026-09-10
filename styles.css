@@ -162,20 +162,25 @@ body, html {
   left: 14px;
   width: 410px;
   max-width: calc(100vw - 28px);
-  max-height: calc(100vh - 100px);
-  overflow-y: auto;
-  -webkit-overflow-scrolling: touch;
   z-index: 1000;
   padding: 14px;
+  overflow: visible;
   transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-#route-panel::-webkit-scrollbar {
-  width: 4px;
+#route-panel.has-suggestions {
+  overflow: visible !important;
+  max-height: none !important;
 }
-#route-panel::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.2);
-  border-radius: 4px;
+
+#route-panel.panel-compact {
+  padding: 8px 12px;
+}
+
+#route-panel.panel-compact .panel-header,
+#route-panel.panel-compact #road-adhesion-bar,
+#route-panel.panel-compact .quick-chips {
+  display: none !important;
 }
 
 /* Folded State on Mobile */
@@ -520,21 +525,30 @@ body, html {
 }
 
 /* Autocomplete Dropdown */
+.input-row-wrapper.active-autocomplete {
+  z-index: 100000 !important;
+}
+
 .suggestions-dropdown {
   position: absolute;
-  top: 100%;
+  top: calc(100% + 5px);
   left: 0;
   right: 0;
-  background: var(--bg-card);
-  backdrop-filter: blur(18px);
-  -webkit-backdrop-filter: blur(18px);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-md);
-  margin-top: 4px;
-  z-index: 2000;
-  max-height: 230px;
+  background: #0f172a;
+  border: 1.5px solid var(--primary);
+  border-radius: 12px;
+  margin-top: 2px;
+  z-index: 999999;
+  max-height: 260px;
   overflow-y: auto;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.5);
+  box-shadow: 0 16px 45px rgba(0, 0, 0, 0.95), 0 0 0 1px rgba(255, 255, 255, 0.1);
+}
+
+.recent-search-item {
+  background: rgba(255, 255, 255, 0.02);
+}
+.recent-search-item:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .suggestion-item {
@@ -634,128 +648,99 @@ body, html {
    Multi-Route Cards Grid (4 Modes)
    ========================================================================== */
 
-.route-modes-grid-4 {
+/* ── Route Panel Waze Style ─────────────────────── */
+.route-modes-3 {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 8px;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 7px;
   margin-top: 10px;
 }
 
-.route-card {
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid var(--bg-glass-border);
-  border-radius: var(--radius-md);
-  padding: 9px;
+.route-card-waze {
+  background: rgba(255,255,255,0.04);
+  border: 1.5px solid var(--bg-glass-border);
+  border-radius: 12px;
+  padding: 10px 8px 8px;
   cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-}
-
-.route-card:hover {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.2);
-}
-
-.route-card.active {
-  background: rgba(16, 185, 129, 0.14);
-  border-color: var(--primary);
-  box-shadow: 0 0 0 1px var(--primary), 0 4px 15px var(--primary-glow);
-}
-
-.route-card-top {
+  transition: all 0.22s ease;
   display: flex;
-  justify-content: space-between;
+  flex-direction: column;
   align-items: center;
-  margin-bottom: 4px;
+  gap: 3px;
+  text-align: center;
+  position: relative;
+  min-height: 110px;
 }
 
-.route-badge-piste {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(16, 185, 129, 0.25);
-  color: #34d399;
+.route-card-waze:hover {
+  background: rgba(255,255,255,0.09);
+  transform: translateY(-1px);
 }
 
-.route-badge-neutral {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(14, 165, 233, 0.25);
-  color: #38bdf8;
+.route-card-waze.active {
+  background: rgba(16,185,129,0.13);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1.5px var(--primary), 0 6px 20px var(--primary-glow);
 }
 
-.route-badge-battery {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(234, 179, 8, 0.25);
-  color: #facc15;
-}
-
-.route-badge-emerald {
-  font-size: 9.5px;
-  font-weight: 700;
-  padding: 2px 5px;
-  border-radius: 4px;
-  background: rgba(5, 150, 105, 0.25);
-  color: #6ee7b7;
-}
-
-.route-climb-tag {
+.rcw-badge {
   font-size: 10px;
-  font-weight: 700;
-  color: var(--text-muted);
+  font-weight: 800;
+  padding: 2px 7px;
+  border-radius: 20px;
+  letter-spacing: 0.01em;
+  margin-bottom: 2px;
 }
-.route-climb-tag.flat { color: #34d399; }
+.fast-badge  { background: rgba(239,68,68,0.2);    color: #f87171; }
+.safe-badge  { background: rgba(16,185,129,0.2);   color: #34d399; }
+.eco-badge   { background: rgba(234,179,8,0.2);    color: #facc15; }
 
-.route-card-title {
-  font-size: 12px;
-  font-weight: 700;
+.rcw-time {
+  font-family: var(--font-mono);
+  font-size: 22px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1;
+}
+
+.rcw-dist {
+  font-size: 11px;
+  font-weight: 600;
   color: var(--text-main);
 }
 
-.route-stat-time {
-  font-family: var(--font-mono);
-  font-size: 18px;
-  font-weight: 800;
-  color: var(--primary);
-  margin: 2px 0;
-}
-
-.route-stat-meta {
-  font-size: 10.5px;
-  color: var(--text-muted);
-  margin-bottom: 4px;
-}
-
-.praticability-tag {
-  display: inline-block;
+.rcw-piste {
   font-size: 9.5px;
-  font-weight: 600;
-  padding: 2px 5px;
-  border-radius: 3px;
-  margin-bottom: 5px;
+  color: var(--text-muted);
+  margin-top: 1px;
 }
 
-.praticability-tag.optimal { background: rgba(16, 185, 129, 0.2); color: #34d399; }
-.praticability-tag.good { background: rgba(14, 165, 233, 0.2); color: #38bdf8; }
-.praticability-tag.warning { background: rgba(245, 158, 11, 0.2); color: #fbbf24; }
+.rcw-bar {
+  display: flex;
+  width: 100%;
+  height: 4px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255,255,255,0.08);
+  margin-top: 5px;
+}
 
+.rcw-seg.green  { background: #10b981; }
+.rcw-seg.blue   { background: #0ea5e9; }
+.rcw-seg.yellow { background: #eab308; }
+
+/* Legacy surface-bar kept for elevation drawer compat */
 .surface-bar {
   display: flex;
   height: 4px;
   border-radius: 2px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255,255,255,0.1);
 }
-
-.surface-seg.green { background: #10b981; }
-.surface-seg.blue { background: #0ea5e9; }
+.surface-seg.green  { background: #10b981; }
+.surface-seg.blue   { background: #0ea5e9; }
 .surface-seg.yellow { background: #eab308; }
+
 
 /* Elevation Profile */
 .elevation-profile-container {
@@ -821,27 +806,210 @@ body, html {
 .infra-pill.gold { background: rgba(245, 158, 11, 0.15); color: #fbbf24; }
 
 /* ==========================================================================
-   Sticky Launch Bar
+   Waze-Style Route Selection & Launch Bottom Sheet (Zero Scroll)
    ========================================================================== */
 
-#sticky-launch-bar {
+.waze-bottom-sheet {
   position: absolute;
-  bottom: 84px;
+  bottom: max(78px, calc(72px + env(safe-area-inset-bottom)));
   left: 50%;
   transform: translateX(-50%);
-  width: min(440px, calc(100vw - 28px));
-  z-index: 1010;
+  width: min(460px, calc(100vw - 16px));
+  z-index: 1015;
   display: flex;
-  gap: 8px;
-  padding: 8px;
-  border-radius: var(--radius-lg);
-  box-shadow: 0 12px 35px rgba(0, 0, 0, 0.7), 0 0 0 1px var(--primary);
-  animation: slide-up-launch 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  flex-direction: column;
+  padding: 8px 10px 10px;
+  border-radius: 20px;
+  border: 1px solid var(--bg-glass-border);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.8), 0 0 0 1px rgba(16, 185, 129, 0.35);
+  transition: max-height 0.28s cubic-bezier(0.16, 1, 0.3, 1), transform 0.28s ease, opacity 0.2s ease;
+  overflow: hidden;
+  max-height: 380px;
+  animation: slide-up-waze-sheet 0.28s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
-@keyframes slide-up-launch {
-  from { transform: translate(-50%, 20px); opacity: 0; }
+@keyframes slide-up-waze-sheet {
+  from { transform: translate(-50%, 25px); opacity: 0; }
   to { transform: translate(-50%, 0); opacity: 1; }
+}
+
+.waze-bottom-sheet.sheet-collapsed {
+  max-height: 42px;
+  padding-bottom: 6px;
+}
+
+.waze-bottom-sheet.sheet-collapsed .waze-sheet-body {
+  opacity: 0;
+  pointer-events: none;
+  display: none;
+}
+
+.waze-sheet-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 2px 4px 6px;
+  cursor: pointer;
+  user-select: none;
+  position: relative;
+}
+
+.waze-sheet-pill {
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  top: 0;
+  width: 38px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.28);
+  border-radius: 4px;
+}
+
+.waze-sheet-title {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--primary);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  padding-top: 4px;
+}
+
+.waze-sheet-btn {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  color: var(--text-main);
+  border-radius: 50%;
+  width: 24px;
+  height: 24px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.waze-sheet-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+}
+
+.waze-sheet-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  transition: opacity 0.2s ease;
+}
+
+/* Route Cards Container — Responsive 1, 2 or 3 Cards (Zero Scroll) */
+.route-modes-3 {
+  display: flex;
+  justify-content: stretch;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.route-modes-3 .route-card-waze {
+  flex: 1 1 0;
+  min-width: 0;
+}
+
+.route-card-waze {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1.5px solid var(--bg-glass-border);
+  border-radius: 12px;
+  padding: 8px 6px 6px;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  text-align: center;
+  position: relative;
+}
+
+.route-card-waze:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.route-card-waze.active {
+  background: rgba(16, 185, 129, 0.14);
+  border-color: var(--primary);
+  box-shadow: 0 0 0 1.5px var(--primary), 0 4px 18px var(--primary-glow);
+}
+
+.rcw-badge {
+  font-size: 9px;
+  font-weight: 800;
+  padding: 2px 6px;
+  border-radius: 12px;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.fast-badge { background: rgba(239, 68, 68, 0.2); color: #f87171; }
+.safe-badge { background: rgba(16, 185, 129, 0.2); color: #34d399; }
+.eco-badge  { background: rgba(234, 179, 8, 0.2); color: #facc15; }
+
+.rcw-time {
+  font-family: var(--font-mono);
+  font-size: 20px;
+  font-weight: 800;
+  color: var(--primary);
+  line-height: 1;
+  margin-top: 2px;
+}
+
+.rcw-dist {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-main);
+}
+
+.rcw-climb {
+  font-size: 9.5px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.rcw-piste {
+  font-size: 9px;
+  color: var(--text-muted);
+  white-space: nowrap;
+}
+
+.rcw-bar {
+  display: flex;
+  width: 100%;
+  height: 3.5px;
+  border-radius: 2px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.08);
+  margin-top: 3px;
+}
+
+.rcw-seg.green  { background: #10b981; }
+.rcw-seg.blue   { background: #0ea5e9; }
+.rcw-seg.yellow { background: #eab308; }
+
+/* Elevation Pill */
+.waze-sheet-elevation-pill {
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+  padding: 3px 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* Actions Row */
+.waze-sheet-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .btn-launch-primary {
@@ -850,15 +1018,15 @@ body, html {
   color: #fff;
   border: none;
   border-radius: var(--radius-md);
-  padding: 10px 14px;
+  padding: 8px 12px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   cursor: pointer;
   font-weight: 800;
   box-shadow: 0 4px 15px var(--primary-glow);
   transition: all 0.2s;
-  min-height: 50px;
+  min-height: 44px;
 }
 
 .btn-launch-primary:hover, .btn-launch-primary:active {
@@ -866,18 +1034,18 @@ body, html {
   filter: brightness(1.1);
 }
 
-.launch-icon { font-size: 22px; }
+.launch-icon { font-size: 20px; }
 .launch-text-box { display: flex; flex-direction: column; text-align: left; }
-.launch-main-text { font-size: 14px; font-weight: 800; letter-spacing: 0.3px; }
-.launch-sub-text { font-size: 11px; font-weight: 600; opacity: 0.9; }
+.launch-main-text { font-size: 13px; font-weight: 800; letter-spacing: 0.3px; }
+.launch-sub-text { font-size: 10.5px; font-weight: 600; opacity: 0.9; }
 
 .btn-launch-secondary {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.08);
   border: 1px solid var(--bg-glass-border);
   color: var(--text-main);
   border-radius: var(--radius-md);
-  padding: 0 14px;
-  font-size: 12px;
+  padding: 0 12px;
+  font-size: 11.5px;
   font-weight: 700;
   cursor: pointer;
   display: flex;
@@ -886,7 +1054,7 @@ body, html {
   white-space: nowrap;
 }
 
-.btn-launch-secondary:hover { background: rgba(255, 255, 255, 0.2); }
+.btn-launch-secondary:hover { background: rgba(255, 255, 255, 0.18); }
 
 /* ==========================================================================
    Live Ride Recording HUD
@@ -2568,10 +2736,14 @@ body, html {
     right: 8px;
     width: auto;
     max-width: 100%;
-    max-height: calc(100dvh - 80px);
+    overflow: visible;
     border-radius: var(--radius-lg);
     padding: 10px 12px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
+  }
+
+  #route-panel.has-suggestions {
+    overflow: visible !important;
   }
 
   .panel-collapse-bar { display: flex; }
