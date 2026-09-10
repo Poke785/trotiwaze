@@ -49,18 +49,26 @@ body.theme-light {
 body, html {
   width: 100%;
   height: 100%;
+  height: 100dvh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
   font-family: var(--font-sans);
   background-color: var(--bg-dark);
   color: var(--text-main);
   position: fixed;
+  overscroll-behavior: none;
+  touch-action: manipulation;
 }
 
 #app-container {
   position: relative;
   width: 100vw;
-  height: 100vh;
+  height: 100%;
+  height: 100dvh;
+  min-height: -webkit-fill-available;
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 /* ==========================================================================
@@ -72,7 +80,8 @@ body, html {
   top: 0;
   left: 0;
   width: 100vw;
-  height: 100vh;
+  height: 100%;
+  height: 100dvh;
   z-index: 1;
   background: #0f172a !important;
 }
@@ -261,14 +270,15 @@ body, html {
   border: 1px solid var(--bg-glass-border);
   color: var(--text-main);
   border-radius: var(--radius-sm);
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  font-size: 13px;
+  font-size: 14px;
   transition: all 0.2s;
+  flex-shrink: 0;
 }
 
 .icon-btn:hover, .icon-btn:active {
@@ -280,6 +290,67 @@ body, html {
   font-size: 15px;
   background: rgba(16, 185, 129, 0.15);
   border-color: rgba(16, 185, 129, 0.4);
+}
+
+/* Modern Tactile Account Pill Button */
+.auth-account-pill {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: rgba(16, 185, 129, 0.12);
+  border: 1.5px solid rgba(16, 185, 129, 0.4);
+  color: var(--text-main);
+  border-radius: 20px;
+  padding: 3px 10px 3px 5px;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+  height: 34px;
+  flex-shrink: 0;
+}
+
+.auth-account-pill:hover, .auth-account-pill:active {
+  background: rgba(16, 185, 129, 0.25);
+  border-color: var(--primary);
+  transform: scale(1.03);
+  box-shadow: 0 0 12px var(--primary-glow);
+}
+
+.avatar-ring-container {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.12);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+}
+
+.header-avatar-icon {
+  font-size: 14px;
+}
+
+.online-pulse-dot {
+  position: absolute;
+  bottom: -1px;
+  right: -1px;
+  width: 8px;
+  height: 8px;
+  background: #10b981;
+  border: 1.5px solid var(--bg-dark);
+  border-radius: 50%;
+  box-shadow: 0 0 6px #10b981;
+}
+
+.auth-pill-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  color: #34d399;
+  max-width: 90px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Road Adhesion & Weather Bar */
@@ -474,15 +545,36 @@ body, html {
   cursor: pointer;
   border-bottom: 1px solid rgba(255, 255, 255, 0.05);
   font-size: 12px;
+  transition: background 0.15s;
 }
 
 .suggestion-item:hover {
   background: rgba(255, 255, 255, 0.1);
 }
 
-.sugg-icon { font-size: 14px; opacity: 0.8; }
+.suggestion-item.verified-cycleway {
+  background: rgba(16, 185, 129, 0.08);
+  border-left: 3px solid #10b981;
+}
+
+.suggestion-item.verified-cycleway:hover {
+  background: rgba(16, 185, 129, 0.16);
+}
+
+.sugg-icon { font-size: 14px; opacity: 0.9; }
 .sugg-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.sugg-main-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
 .sugg-main { font-weight: 600; color: var(--text-main); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.sugg-verified-badge {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 8px;
+  background: rgba(16, 185, 129, 0.25);
+  border: 1px solid rgba(16, 185, 129, 0.5);
+  color: #34d399;
+  white-space: nowrap;
+}
 .sugg-sub { font-size: 10.5px; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* Quick Chips */
@@ -518,6 +610,12 @@ body, html {
   background: rgba(14, 165, 233, 0.15);
   border-color: rgba(14, 165, 233, 0.35);
   color: #38bdf8;
+}
+
+.fav-chip-cycleway {
+  background: rgba(16, 185, 129, 0.18);
+  border-color: rgba(16, 185, 129, 0.45);
+  color: #34d399;
 }
 
 .fav-chip-charge {
@@ -1167,21 +1265,21 @@ body, html {
 }
 
 /* ==========================================================================
-   Modals & Settings System (With Tabs)
+   Modals & Accordion Settings Drawer (Mobile Bottom-Sheet)
    ========================================================================== */
 
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.65);
-  backdrop-filter: blur(8px);
-  -webkit-backdrop-filter: blur(8px);
+  background: rgba(0, 0, 0, 0.7);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
   z-index: 3000;
   display: flex;
-  align-items: center;
+  align-items: flex-end; /* Bottom sheet on smartphone */
   justify-content: center;
-  padding: 16px;
-  animation: fade-in-modal 0.2s ease;
+  padding: 0;
+  animation: fade-in-modal 0.25s cubic-bezier(0.16, 1, 0.3, 1);
 }
 
 @keyframes fade-in-modal {
@@ -1190,73 +1288,191 @@ body, html {
 }
 
 .modal-card {
-  width: 100%;
-  max-width: 480px;
-  max-height: 85vh;
+  width: 100vw;
+  max-width: 520px;
+  max-height: 88dvh;
+  min-height: 250px;
+  background: var(--bg-card);
+  border-radius: 24px 24px 0 0;
+  border: 1px solid var(--bg-glass-border);
+  border-bottom: none;
+  box-shadow: 0 -10px 40px rgba(0, 0, 0, 0.8);
+  padding: 16px 16px max(24px, env(safe-area-inset-bottom)) 16px;
   overflow-y: auto;
-  padding: 18px;
+  -webkit-overflow-scrolling: touch;
   position: relative;
+  animation: slideUpBottom 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slideUpBottom {
+  from { transform: translateY(100%); }
+  to { transform: translateY(0); }
 }
 
 .modal-header {
   display: flex;
   justify-content: space-between;
-  align-items: center;
+  align-items: flex-start;
   margin-bottom: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.modal-title-box {
+  display: flex;
+  flex-direction: column;
 }
 
 .modal-title {
   font-size: 16px;
   font-weight: 800;
+  color: var(--text-main);
+}
+
+.modal-subtitle {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 2px;
 }
 
 .tab-subtitle {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-muted);
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
-/* Settings Tabs Navigation */
-.settings-nav-tabs {
+/* ==========================================================================
+   Accordion Drawer System (Volets Dépliants pour Mobile)
+   ========================================================================== */
+
+.settings-accordion {
   display: flex;
-  gap: 4px;
-  background: rgba(0, 0, 0, 0.25);
-  padding: 4px;
-  border-radius: var(--radius-md);
-  margin-bottom: 14px;
-  overflow-x: auto;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 6px;
 }
 
-.settings-nav-tabs::-webkit-scrollbar { display: none; }
+.accordion-item {
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
 
-.settings-tab-btn {
-  flex: 1;
-  padding: 7px 8px;
-  border-radius: var(--radius-sm);
+.accordion-item.open {
+  background: rgba(255, 255, 255, 0.06);
+  border-color: rgba(16, 185, 129, 0.4);
+  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+
+.accordion-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
   background: transparent;
   border: none;
-  color: var(--text-muted);
-  font-size: 11px;
-  font-weight: 700;
-  white-space: nowrap;
+  color: var(--text-main);
   cursor: pointer;
-  transition: all 0.2s;
+  text-align: left;
+  gap: 10px;
+  user-select: none;
 }
 
-.settings-tab-btn:hover { color: var(--text-main); }
-
-.settings-tab-btn.active {
-  background: var(--primary);
-  color: #fff;
-  box-shadow: 0 2px 8px var(--primary-glow);
+.accordion-header:active {
+  background: rgba(255, 255, 255, 0.06);
 }
 
-.settings-tab-pane {
+.acc-header-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  min-width: 0;
+}
+
+.acc-header-icon {
+  font-size: 20px;
+  flex-shrink: 0;
+}
+
+.acc-header-titles {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.acc-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  color: var(--text-main);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.acc-subtitle {
+  font-size: 10.5px;
+  color: var(--text-muted);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  margin-top: 1px;
+}
+
+.acc-header-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.acc-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 7px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-muted);
+}
+
+.acc-badge.green {
+  background: rgba(16, 185, 129, 0.2);
+  color: #34d399;
+}
+
+.acc-chevron {
+  font-size: 9px;
+  color: var(--text-muted);
+  transition: transform 0.25s ease;
+}
+
+.accordion-item.open .acc-chevron {
+  transform: rotate(180deg);
+  color: var(--primary);
+}
+
+.accordion-body {
   display: none;
+  padding: 12px 14px 14px 14px;
+  border-top: 1px solid rgba(255, 255, 255, 0.06);
+  animation: fadeIn 0.2s ease;
 }
 
-.settings-tab-pane.active {
+.accordion-item.open .accordion-body {
   display: block;
+}
+
+.highlight-filter {
+  background: rgba(239, 68, 68, 0.08) !important;
+  border-color: rgba(239, 68, 68, 0.3) !important;
+}
+
+.highlight-cycleways {
+  background: rgba(16, 185, 129, 0.1) !important;
+  border-color: rgba(16, 185, 129, 0.35) !important;
 }
 
 /* Map Layers Grid */
@@ -2272,104 +2488,175 @@ body, html {
 }
 
 /* ==========================================================================
-   Responsive Adaptations for Mobile Portrait & Mobile Landscape
+   Responsive Adaptations for Smartphones (Portrait & Landscape) & Tablets
    ========================================================================== */
 
-@media (max-width: 640px) {
+/* Smartphones (Portrait) */
+@media (max-width: 768px) {
   #route-panel {
-    top: auto;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    width: 100vw;
-    max-width: 100vw;
-    max-height: 75vh;
-    border-radius: 20px 20px 0 0;
-    padding: 10px 14px 20px 14px;
-    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.7);
+    top: max(8px, env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: 100%;
+    max-height: calc(100dvh - 80px);
+    border-radius: var(--radius-lg);
+    padding: 10px 12px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.6);
   }
 
   .panel-collapse-bar { display: flex; }
 
   #route-panel.panel-folded {
-    max-height: 125px;
+    max-height: 110px;
     overflow: hidden;
   }
 
   #route-panel.panel-folded #panel-expandable-content,
-  #route-panel.panel-folded .quick-chips {
+  #route-panel.panel-folded .quick-chips,
+  #route-panel.panel-folded #road-adhesion-bar {
     display: none !important;
   }
 
+  .route-modes-grid-4 {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 6px;
+  }
+
+  .route-card {
+    padding: 7px 8px;
+  }
+
+  .route-card-title {
+    font-size: 11.5px;
+  }
+
+  .route-stat-time {
+    font-size: 15px;
+  }
+
   #hud-dashboard {
-    bottom: 10px;
-    left: 10px;
-    right: 10px;
-    height: 58px;
-    padding: 0 12px;
+    bottom: max(8px, env(safe-area-inset-bottom));
+    left: 8px;
+    right: 8px;
+    height: 56px;
+    padding: 0 10px;
   }
 
   #sticky-launch-bar {
-    bottom: 74px;
+    bottom: max(70px, calc(64px + env(safe-area-inset-bottom)));
+    left: 8px;
+    right: 8px;
+    max-width: calc(100vw - 16px);
   }
 
   .map-floating-stack {
-    bottom: 76px;
-    right: 10px;
+    bottom: max(72px, calc(66px + env(safe-area-inset-bottom)));
+    right: 8px;
     gap: 6px;
   }
 
   .fab-btn {
-    width: 40px;
-    height: 40px;
-    font-size: 15px;
+    width: 42px;
+    height: 42px;
+    font-size: 16px;
+    border-radius: 50%;
   }
 
   #cyclosm-badge {
-    top: 10px;
-    right: 10px;
+    top: auto;
+    bottom: max(72px, calc(66px + env(safe-area-inset-bottom)));
+    left: 8px;
     font-size: 9px;
+    padding: 4px 8px;
+  }
+
+  #nav-banner {
+    top: max(8px, env(safe-area-inset-top));
+    left: 8px;
+    right: 8px;
+    width: auto;
+    padding: 10px 12px;
   }
 }
 
-/* Mobile Landscape (Support Smartphone Guidon Horizontal) */
+/* Very Small Smartphones (iPhone SE, 320px - 380px) */
+@media (max-width: 380px) {
+  .brand-title { font-size: 15px; }
+  .brand-subtitle { font-size: 8px; }
+  .auth-pill-label { display: none; } /* Show only avatar badge on tiny screens */
+  .auth-account-pill { padding: 3px 6px; }
+  .route-modes-grid-4 { grid-template-columns: 1fr; }
+}
+
+/* Tablets (iPad / Galaxy Tab: 769px to 1024px) */
+@media (min-width: 769px) and (max-width: 1024px) {
+  #route-panel {
+    top: 14px;
+    left: 14px;
+    width: 380px;
+    max-height: calc(100dvh - 30px);
+  }
+
+  #hud-dashboard {
+    bottom: 14px;
+    left: auto;
+    right: 14px;
+    width: 380px;
+  }
+
+  #sticky-launch-bar {
+    bottom: 80px;
+    left: auto;
+    right: 14px;
+    width: 380px;
+  }
+
+  .map-floating-stack {
+    top: 14px;
+    bottom: auto;
+    right: 14px;
+  }
+}
+
+/* Smartphone Landscape (Handlebar Horizontal Mount) */
 @media (orientation: landscape) and (max-height: 550px) {
   #route-panel {
-    top: 10px;
-    bottom: auto;
-    left: 10px;
+    top: max(6px, env(safe-area-inset-top));
+    bottom: max(6px, env(safe-area-inset-bottom));
+    left: max(6px, env(safe-area-inset-left));
     right: auto;
-    width: 320px;
-    max-width: 320px;
-    max-height: calc(100vh - 20px);
+    width: 310px;
+    max-width: 310px;
+    max-height: calc(100dvh - 12px);
     border-radius: var(--radius-lg);
     overflow-y: auto;
-    padding: 10px;
+    padding: 8px 10px;
   }
 
   .panel-collapse-bar { display: none; }
 
   #hud-dashboard {
-    bottom: 10px;
+    bottom: max(6px, env(safe-area-inset-bottom));
     left: auto;
-    right: 10px;
-    width: 340px;
-    height: 52px;
-    padding: 0 10px;
+    right: max(6px, env(safe-area-inset-right));
+    width: 320px;
+    height: 48px;
+    padding: 0 8px;
   }
 
   #sticky-launch-bar {
-    bottom: 68px;
+    bottom: 60px;
     left: auto;
-    right: 10px;
-    width: 340px;
-    max-width: 340px;
+    right: max(6px, env(safe-area-inset-right));
+    width: 320px;
+    max-width: 320px;
   }
 
   .map-floating-stack {
-    top: 10px;
+    top: max(6px, env(safe-area-inset-top));
     bottom: auto;
-    right: 10px;
+    right: max(6px, env(safe-area-inset-right));
     gap: 5px;
   }
 
@@ -2380,18 +2667,311 @@ body, html {
   }
 
   #nav-banner {
-    top: 10px;
-    left: 10px;
+    top: max(6px, env(safe-area-inset-top));
+    left: max(6px, env(safe-area-inset-left));
     right: auto;
-    width: 340px;
-    padding: 8px 12px;
+    width: 310px;
+    padding: 6px 10px;
   }
 
   #cyclosm-badge {
     top: auto;
-    bottom: 10px;
-    left: 10px;
+    bottom: max(6px, env(safe-area-inset-bottom));
+    left: 325px;
     font-size: 8.5px;
+    padding: 3px 6px;
   }
 }
+
+/* ==========================================================================
+   Verified Cycleways Explorer Modal & Popup Cards
+   ========================================================================== */
+
+.cycleways-modal-card {
+  max-width: 580px;
+}
+
+.cycleways-search-bar {
+  margin: 10px 0 8px 0;
+}
+
+.cycleways-search-bar input {
+  width: 100%;
+  padding: 9px 12px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: var(--radius-md);
+  color: var(--text-main);
+  font-size: 12.5px;
+  outline: none;
+  transition: border-color 0.2s;
+}
+
+.cycleways-search-bar input:focus {
+  border-color: #10b981;
+}
+
+.cycleways-city-chips {
+  display: flex;
+  gap: 6px;
+  overflow-x: auto;
+  padding-bottom: 8px;
+  margin-bottom: 8px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.cycleways-city-chips::-webkit-scrollbar { display: none; }
+
+.cycleway-chip {
+  padding: 4px 10px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 16px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.cycleway-chip:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: var(--text-main);
+}
+
+.cycleway-chip.active {
+  background: rgba(16, 185, 129, 0.22);
+  border-color: rgba(16, 185, 129, 0.6);
+  color: #34d399;
+}
+
+.cycleways-list-container {
+  max-height: 52dvh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding-right: 2px;
+}
+
+.cycleway-item-card {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: var(--radius-md);
+  padding: 10px 12px;
+  transition: all 0.2s;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.cycleway-item-card:hover {
+  background: rgba(16, 185, 129, 0.07);
+  border-color: rgba(16, 185, 129, 0.35);
+  transform: translateY(-1px);
+}
+
+.cycleway-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.cycleway-item-title {
+  font-size: 13px;
+  font-weight: 700;
+  color: #34d399;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cycleway-item-distance {
+  font-size: 11px;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.cycleway-item-city {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.cycleway-badge-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin: 2px 0;
+}
+
+.cycleway-tag-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(16, 185, 129, 0.15);
+  color: #10b981;
+  border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.cycleway-tag-badge.surface {
+  background: rgba(14, 165, 233, 0.15);
+  color: #38bdf8;
+  border-color: rgba(14, 165, 233, 0.3);
+}
+
+.cycleway-item-desc {
+  font-size: 11px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.cycleway-item-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.btn-cycleway-nav {
+  flex: 1;
+  padding: 7px 12px;
+  background: #10b981;
+  color: #042f2e;
+  border: none;
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+}
+
+.btn-cycleway-nav:hover, .btn-cycleway-nav:active {
+  background: #34d399;
+  transform: scale(1.02);
+}
+
+.btn-cycleway-show {
+  padding: 7px 12px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-main);
+  border: 1px solid var(--bg-glass-border);
+  border-radius: 8px;
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.btn-cycleway-show:hover {
+  background: rgba(255, 255, 255, 0.16);
+}
+
+/* Custom Leaflet Popup for Verified Tracks */
+.leaflet-popup-content-wrapper {
+  background: rgba(15, 23, 42, 0.95) !important;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+  border-radius: 14px !important;
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.6) !important;
+  color: #f8fafc !important;
+}
+
+.leaflet-popup-tip {
+  background: rgba(15, 23, 42, 0.95) !important;
+  border: 1px solid rgba(16, 185, 129, 0.4) !important;
+}
+
+.verified-track-popup {
+  font-family: var(--font-sans);
+  min-width: 200px;
+  max-width: 260px;
+  padding: 2px;
+}
+
+.track-popup-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.track-shield {
+  font-size: 9px;
+  font-weight: 800;
+  color: #10b981;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.track-quality {
+  font-size: 9px;
+  font-weight: 700;
+  color: #38bdf8;
+}
+
+.track-popup-title {
+  font-size: 13px;
+  font-weight: 800;
+  color: #fff;
+  line-height: 1.25;
+  margin-bottom: 2px;
+}
+
+.track-popup-city {
+  font-size: 10px;
+  color: #94a3b8;
+  margin-bottom: 6px;
+}
+
+.track-popup-details {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin-bottom: 6px;
+}
+
+.track-badge-pill {
+  font-size: 9.5px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.08);
+  padding: 2px 6px;
+  border-radius: 4px;
+}
+
+.track-popup-desc {
+  font-size: 10px;
+  color: #94a3b8;
+  line-height: 1.3;
+  margin-bottom: 8px;
+}
+
+.btn-navigate-track {
+  width: 100%;
+  padding: 6px 10px;
+  background: #10b981;
+  color: #042f2e;
+  border: none;
+  border-radius: 6px;
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: all 0.2s;
+  text-align: center;
+}
+
+.btn-navigate-track:hover {
+  background: #34d399;
+}
+
 
