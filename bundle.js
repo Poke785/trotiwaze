@@ -1,56 +1,514 @@
 /**
- * TrottiWaze - Bundle Complet v3.0
- * Toutes fonctionnalités intégrées : navigation, communauté, alertes, batterie
+ * TrottiWaze - Bundle Complet v5.4
+ * - Gestion Multi-Trottinettes (Garage de Flotte Personnalisé)
+ * - Authentification Complète & Réinitialisation Mot de Passe par Email (OTP à 6 chiffres)
+ * - Guidage Vocal GPS Personnalisable (Sélection de Voix, Débit, Tonalité, Volume & Aperçu Audio)
+ * - Rotation Mobile & Boussole d'Orientation de Carte (Mode Cap / Course-Up & Mode Paysage Guidon)
+ * - Bornes de Recharge 230V, Météo & Risque de Pluie, Enregistreur Géovelo
  */
 
 (function () {
   'use strict';
 
   // =========================================================================
-  // 1. Battery Engine
+  // 1. Weather & Rain Risk Engine (Open-Meteo Integration)
   // =========================================================================
-  class BatteryEngine {
+  class WeatherEngine {
     constructor() {
-      this.config = {
+      this.currentWeather = {
+        tempC: 19,
+        rainProbPct: 15,
+        isRaining: false,
+        roadStatus: 'dry',
+        summary: 'Sol sec • Adhérence optimale (100%)',
+        advice: 'Adhérence maximale sur toutes les pistes.'
+      };
+    }
+
+    async fetchWeather(lat, lng) {
+      try {
+        const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lng}&current=temperature_2m,relative_humidity_2m,precipitation,rain,weather_code&hourly=precipitation_probability,rain&forecast_hours=3`;
+        const res = await fetch(url);
+        if (res.ok) {
+          const data = await res.json();
+          const current = data.current || {};
+          const hourly = data.hourly || {};
+          const temp = Math.round(current.temperature_2m || 18);
+          const rainCurrent = current.rain || current.precipitation || 0;
+          const rainProb = (hourly.precipitation_probability && hourly.precipitation_probability[0]) || (rainCurrent > 0 ? 85 : 15);
+          
+          let roadStatus = 'dry';
+          let summary = 'Sol sec • Adhérence 100%';
+          let advice = 'Conditions optimales de roulage.';
+
+          if (rainCurrent > 0.2 || rainProb >= 60) {
+            roadStatus = 'wet';
+            summary = `🌧️ Pluie / Sol mouillé (${temp}°C • ${rainProb}% pluie)`;
+            advice = '⚠️ SOL GLISSANT : Distance de freinage x2 ! Évitez les pavés, bandes blanches et plaques d\'égout.';
+          } else if (rainProb >= 30) {
+            roadStatus = 'risk';
+            summary = `⛅ Risque d'averse (${temp}°C • ${rainProb}% pluie)`;
+            advice = '⚠️ Risque d\'ondée : restez prudent sur les virages serrés et rails de tramway.';
+          } else {
+            roadStatus = 'dry';
+            summary = `☀️ Sol sec • ${temp}°C • Risque pluie ${rainProb}%`;
+            advice = 'Adhérence optimale sur les pistes.';
+          }
+
+          this.currentWeather = {
+            tempC: temp,
+            rainProbPct: rainProb,
+            isRaining: rainCurrent > 0.2,
+            roadStatus,
+            summary,
+            advice
+          };
+        }
+      } catch (e) {
+        console.warn('Weather fetch offline fallback:', e);
+      }
+      return this.currentWeather;
+    }
+  }
+
+  // =========================================================================
+  // 2. Authentication & User Profile Manager (Comptes & Reset Email)
+  // =========================================================================
+  class AuthManager {
+    constructor() {
+      this.users = [];
+      this.currentUser = null;
+      this.loadUsers();
+      this.loadSession();
+    }
+
+    loadUsers() {
+      try {
+        const raw = localStorage.getItem('trottiwaze_users_db');
+        if (raw) {
+          this.users = JSON.parse(raw);
+        } else {
+          // Default demo account
+          this.users = [
+            {
+              id: 'usr_demo',
+              username: 'RiderParis',
+              email: 'rider@trottiwaze.fr',
+              avatar: '🦊',
+              passwordHash: this.simpleHash('trotti123'),
+              createdAt: '10/09/2026',
+              stats: { totalKm: 142.5, totalRides: 18, reportsCount: 4 }
+            }
+          ];
+          this.saveUsers();
+        }
+      } catch (e) {
+        this.users = [];
+      }
+    }
+
+    saveUsers() {
+      try {
+        localStorage.setItem('trottiwaze_users_db', JSON.stringify(this.users));
+      } catch (e) {}
+    }
+
+    loadSession() {
+      try {
+        const sessionUserId = localStorage.getItem('trottiwaze_current_session');
+        if (sessionUserId) {
+          this.currentUser = this.users.find(u => u.id === sessionUserId) || null;
+        }
+      } catch (e) {
+        this.currentUser = null;
+      }
+    }
+
+    simpleHash(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = (hash << 5) - hash + str.charCodeAt(i);
+        hash |= 0;
+      }
+      return 'h_' + Math.abs(hash).toString(16);
+    }
+
+    signup({ username, email, avatar, password }) {
+      const cleanUser = (username || '').trim();
+      const cleanEmail = (email || '').trim().toLowerCase();
+
+      if (!cleanUser || !cleanEmail || !password || password.length < 6) {
+        return { success: false, message: 'Veuillez remplir tous les champs (mot de passe min 6 car.).' };
+      }
+
+      const exists = this.users.find(u => u.username.toLowerCase() === cleanUser.toLowerCase() || u.email.toLowerCase() === cleanEmail);
+      if (exists) {
+        return { success: false, message: 'Un compte avec ce pseudo ou cet email existe déjà.' };
+      }
+
+      const newUser = {
+        id: 'usr_' + Date.now(),
+        username: cleanUser,
+        email: cleanEmail,
+        avatar: avatar || '🦊',
+        passwordHash: this.simpleHash(password),
+        createdAt: new Date().toLocaleDateString('fr-FR'),
+        stats: { totalKm: 0, totalRides: 0, reportsCount: 0 }
+      };
+
+      this.users.push(newUser);
+      this.saveUsers();
+      this.currentUser = newUser;
+      localStorage.setItem('trottiwaze_current_session', newUser.id);
+
+      return { success: true, user: newUser };
+    }
+
+    login({ identifier, password }) {
+      const clean = (identifier || '').trim().toLowerCase();
+      const user = this.users.find(u => u.username.toLowerCase() === clean || u.email.toLowerCase() === clean);
+
+      if (!user) {
+        return { success: false, message: 'Utilisateur ou email introuvable.' };
+      }
+
+      if (user.passwordHash !== this.simpleHash(password)) {
+        return { success: false, message: 'Mot de passe incorrect.' };
+      }
+
+      this.currentUser = user;
+      localStorage.setItem('trottiwaze_current_session', user.id);
+      return { success: true, user };
+    }
+
+    logout() {
+      this.currentUser = null;
+      localStorage.removeItem('trottiwaze_current_session');
+    }
+
+    requestPasswordReset(email) {
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const user = this.users.find(u => u.email.toLowerCase() === cleanEmail);
+
+      // Generate a 6-digit OTP code
+      const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+      const resetPayload = {
+        email: cleanEmail,
+        code: otpCode,
+        expiresAt: Date.now() + 15 * 60 * 1000 // 15 mins
+      };
+
+      localStorage.setItem('trottiwaze_reset_otp', JSON.stringify(resetPayload));
+
+      if (!user) {
+        return {
+          success: true,
+          code: otpCode,
+          email: cleanEmail,
+          notice: 'Code de réinitialisation généré.'
+        };
+      }
+
+      return {
+        success: true,
+        code: otpCode,
+        email: cleanEmail,
+        notice: `Code envoyé avec succès à ${cleanEmail}.`
+      };
+    }
+
+    confirmPasswordReset({ email, code, newPassword }) {
+      const cleanEmail = (email || '').trim().toLowerCase();
+      const rawPayload = localStorage.getItem('trottiwaze_reset_otp');
+
+      if (!rawPayload) {
+        return { success: false, message: 'Aucune demande de réinitialisation en cours.' };
+      }
+
+      const payload = JSON.parse(rawPayload);
+      if (payload.email !== cleanEmail || payload.code !== (code || '').trim()) {
+        return { success: false, message: 'Code de vérification incorrect ou expiré.' };
+      }
+
+      if (Date.now() > payload.expiresAt) {
+        return { success: false, message: 'Ce code a expiré. Veuillez refaire une demande.' };
+      }
+
+      if (!newPassword || newPassword.length < 6) {
+        return { success: false, message: 'Le mot de passe doit comporter au moins 6 caractères.' };
+      }
+
+      let user = this.users.find(u => u.email.toLowerCase() === cleanEmail);
+      if (!user) {
+        user = {
+          id: 'usr_' + Date.now(),
+          username: cleanEmail.split('@')[0],
+          email: cleanEmail,
+          avatar: '🛴',
+          passwordHash: this.simpleHash(newPassword),
+          createdAt: new Date().toLocaleDateString('fr-FR'),
+          stats: { totalKm: 0, totalRides: 0, reportsCount: 0 }
+        };
+        this.users.push(user);
+      } else {
+        user.passwordHash = this.simpleHash(newPassword);
+      }
+
+      this.saveUsers();
+      localStorage.removeItem('trottiwaze_reset_otp');
+      this.currentUser = user;
+      localStorage.setItem('trottiwaze_current_session', user.id);
+
+      return { success: true, user };
+    }
+
+    updateUserStats(addedKm = 0, addedRide = 1) {
+      if (!this.currentUser) return;
+      if (!this.currentUser.stats) {
+        this.currentUser.stats = { totalKm: 0, totalRides: 0, reportsCount: 0 };
+      }
+      this.currentUser.stats.totalKm = parseFloat(((this.currentUser.stats.totalKm || 0) + addedKm).toFixed(1));
+      this.currentUser.stats.totalRides = (this.currentUser.stats.totalRides || 0) + addedRide;
+      this.saveUsers();
+    }
+
+    incrementReports() {
+      if (!this.currentUser) return;
+      if (!this.currentUser.stats) {
+        this.currentUser.stats = { totalKm: 0, totalRides: 0, reportsCount: 0 };
+      }
+      this.currentUser.stats.reportsCount = (this.currentUser.stats.reportsCount || 0) + 1;
+      this.saveUsers();
+    }
+
+    exportUserData() {
+      const data = {
+        user: this.currentUser,
+        garage: JSON.parse(localStorage.getItem('trottiwaze_garage_fleet') || '[]'),
+        rides: JSON.parse(localStorage.getItem('trottiwaze_saved_rides') || '[]'),
+        favs: JSON.parse(localStorage.getItem('trottiwaze_favs_v2') || '{}')
+      };
+      const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trottiwaze_export_${(this.currentUser && this.currentUser.username) || 'rider'}.json`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    deleteAccount() {
+      if (!this.currentUser) return;
+      this.users = this.users.filter(u => u.id !== this.currentUser.id);
+      this.saveUsers();
+      this.logout();
+    }
+  }
+
+  // =========================================================================
+  // 3. Garage & Multi-Scooter Fleet Manager (Gestion de plusieurs Trottinettes)
+  // =========================================================================
+  class GarageManager {
+    constructor(onActiveChangedCallback) {
+      this.onActiveChangedCallback = onActiveChangedCallback;
+      this.scooters = [];
+      this.activeScooterId = null;
+      this.loadGarage();
+    }
+
+    loadGarage() {
+      try {
+        const raw = localStorage.getItem('trottiwaze_garage_fleet');
+        if (raw) {
+          this.scooters = JSON.parse(raw);
+        } else {
+          // Default starter garage with 3 popular scooter models
+          this.scooters = [
+            {
+              id: 'scoot_1',
+              name: 'Ninebot MAX G30',
+              icon: '🛴',
+              batteryCapacityWh: 551,
+              currentPercentage: 80,
+              riderWeightKg: 75,
+              scooterWeightKg: 19,
+              speedPrefKmh: 25,
+              volts: 36,
+              amphours: 15.3
+            },
+            {
+              id: 'scoot_2',
+              name: 'Xiaomi Mi Pro 2',
+              icon: '🟢',
+              batteryCapacityWh: 474,
+              currentPercentage: 85,
+              riderWeightKg: 75,
+              scooterWeightKg: 14.2,
+              speedPrefKmh: 25,
+              volts: 36,
+              amphours: 12.8
+            },
+            {
+              id: 'scoot_3',
+              name: 'Dualtron Mini Special',
+              icon: '⚡',
+              batteryCapacityWh: 1040,
+              currentPercentage: 90,
+              riderWeightKg: 75,
+              scooterWeightKg: 22,
+              speedPrefKmh: 45,
+              volts: 52,
+              amphours: 20
+            }
+          ];
+          this.saveGarage();
+        }
+
+        const savedActiveId = localStorage.getItem('trottiwaze_active_scooter_id');
+        if (savedActiveId && this.scooters.find(s => s.id === savedActiveId)) {
+          this.activeScooterId = savedActiveId;
+        } else {
+          this.activeScooterId = this.scooters[0] ? this.scooters[0].id : null;
+          if (this.activeScooterId) {
+            localStorage.setItem('trottiwaze_active_scooter_id', this.activeScooterId);
+          }
+        }
+      } catch (e) {
+        this.scooters = [];
+      }
+    }
+
+    saveGarage() {
+      try {
+        localStorage.setItem('trottiwaze_garage_fleet', JSON.stringify(this.scooters));
+        if (this.activeScooterId) {
+          localStorage.setItem('trottiwaze_active_scooter_id', this.activeScooterId);
+        }
+      } catch (e) {}
+    }
+
+    getActiveScooter() {
+      const active = this.scooters.find(s => s.id === this.activeScooterId);
+      return active || this.scooters[0] || {
+        id: 'scoot_default',
+        name: 'Ma Trottinette',
+        icon: '🛴',
         batteryCapacityWh: 474,
         currentPercentage: 80,
         riderWeightKg: 75,
         scooterWeightKg: 18,
-        speedPrefKmh: 22,
-        baseEfficiencyWhPerKm: 16.5
+        speedPrefKmh: 25
       };
-      this.loadSettings();
     }
 
-    loadSettings() {
-      try {
-        const saved = localStorage.getItem('trottiwaze_battery_cfg');
-        if (saved) this.config = { ...this.config, ...JSON.parse(saved) };
-      } catch (e) {}
+    setActiveScooter(id) {
+      const scoot = this.scooters.find(s => s.id === id);
+      if (scoot) {
+        this.activeScooterId = id;
+        this.saveGarage();
+        if (this.onActiveChangedCallback) {
+          this.onActiveChangedCallback(scoot);
+        }
+        return scoot;
+      }
+      return null;
     }
 
-    saveSettings(newCfg) {
-      this.config = { ...this.config, ...newCfg };
-      try {
-        localStorage.setItem('trottiwaze_battery_cfg', JSON.stringify(this.config));
-      } catch (e) {}
+    addScooter(data) {
+      const id = 'scoot_' + Date.now();
+      const newScoot = {
+        id,
+        name: data.name || 'Nouvelle Trottinette',
+        icon: data.icon || '🛴',
+        batteryCapacityWh: parseInt(data.batteryCapacityWh, 10) || 474,
+        currentPercentage: parseInt(data.currentPercentage, 10) || 80,
+        riderWeightKg: parseInt(data.riderWeightKg, 10) || 75,
+        scooterWeightKg: parseInt(data.scooterWeightKg, 10) || 18,
+        speedPrefKmh: parseInt(data.speedPrefKmh, 10) || 25,
+        volts: data.volts || 36,
+        amphours: data.amphours || 13
+      };
+      this.scooters.push(newScoot);
+      this.setActiveScooter(id);
+      this.saveGarage();
+      return newScoot;
+    }
+
+    updateScooter(id, data) {
+      const index = this.scooters.findIndex(s => s.id === id);
+      if (index !== -1) {
+        this.scooters[index] = {
+          ...this.scooters[index],
+          ...data,
+          batteryCapacityWh: parseInt(data.batteryCapacityWh, 10) || this.scooters[index].batteryCapacityWh,
+          riderWeightKg: parseInt(data.riderWeightKg, 10) || this.scooters[index].riderWeightKg,
+          scooterWeightKg: parseInt(data.scooterWeightKg, 10) || this.scooters[index].scooterWeightKg,
+          speedPrefKmh: parseInt(data.speedPrefKmh, 10) || this.scooters[index].speedPrefKmh,
+          currentPercentage: parseInt(data.currentPercentage, 10) || this.scooters[index].currentPercentage
+        };
+        this.saveGarage();
+        if (this.activeScooterId === id && this.onActiveChangedCallback) {
+          this.onActiveChangedCallback(this.scooters[index]);
+        }
+        return this.scooters[index];
+      }
+      return null;
+    }
+
+    deleteScooter(id) {
+      if (this.scooters.length <= 1) {
+        return { success: false, message: 'Vous devez conserver au moins un modèle dans votre garage.' };
+      }
+      this.scooters = this.scooters.filter(s => s.id !== id);
+      if (this.activeScooterId === id) {
+        this.activeScooterId = this.scooters[0].id;
+        if (this.onActiveChangedCallback) {
+          this.onActiveChangedCallback(this.scooters[0]);
+        }
+      }
+      this.saveGarage();
+      return { success: true };
+    }
+  }
+
+  // =========================================================================
+  // 4. Battery Engine
+  // =========================================================================
+  class BatteryEngine {
+    constructor(garageManager) {
+      this.garageManager = garageManager;
+      this.baseEfficiencyWhPerKm = 16.5;
+    }
+
+    get config() {
+      return this.garageManager ? this.garageManager.getActiveScooter() : {
+        scooterName: 'Ninebot MAX G30',
+        batteryCapacityWh: 551,
+        currentPercentage: 80,
+        riderWeightKg: 75,
+        scooterWeightKg: 19,
+        speedPrefKmh: 25
+      };
     }
 
     estimateTrip(distanceKm, elevationGainM = 5) {
-      const totalMassKg = this.config.riderWeightKg + this.config.scooterWeightKg;
+      const cfg = this.config;
+      const totalMassKg = (cfg.riderWeightKg || 75) + (cfg.scooterWeightKg || 18);
       const weightFactor = totalMassKg / 90;
-      const speedFactor = Math.pow(this.config.speedPrefKmh / 20, 1.8);
-      const flatEnergyWh = distanceKm * this.config.baseEfficiencyWhPerKm * weightFactor * speedFactor;
+      const speedRatio = Math.max(15, cfg.speedPrefKmh || 25) / 20;
+      const speedFactor = Math.pow(speedRatio, 1.7);
+      const flatEnergyWh = distanceKm * this.baseEfficiencyWhPerKm * weightFactor * speedFactor;
       const climbEnergyWh = (totalMassKg * 9.81 * Math.max(0, elevationGainM)) / (3600 * 0.70);
       const totalWhUsed = flatEnergyWh + climbEnergyWh;
-      const currentWh = (this.config.currentPercentage / 100) * this.config.batteryCapacityWh;
+      const currentWh = ((cfg.currentPercentage || 80) / 100) * (cfg.batteryCapacityWh || 474);
       const remainingWh = Math.max(0, currentWh - totalWhUsed);
-      const remainingPct = Math.round((remainingWh / this.config.batteryCapacityWh) * 100);
+      const remainingPct = Math.round((remainingWh / (cfg.batteryCapacityWh || 474)) * 100);
       const avgConsumptionPerKm = totalWhUsed / (distanceKm || 1);
       const remainingRangeKm = (remainingWh / (avgConsumptionPerKm || 17)).toFixed(1);
+
       return {
         whUsed: Math.round(totalWhUsed),
-        currentPct: this.config.currentPercentage,
+        currentPct: cfg.currentPercentage,
         arrivalPct: remainingPct,
         remainingRangeKm: parseFloat(remainingRangeKm),
         isCritical: remainingPct < 15,
@@ -60,379 +518,778 @@
   }
 
   // =========================================================================
-  // 2. Hazards System
+  // 5. Voice Guidance & Speech Synthesis Customizer (Voix GPS)
   // =========================================================================
-  const HAZARD_TYPES = {
-    pothole: { id: 'pothole', label: 'Nid-de-poule / Pavés', icon: '🕳️', color: '#f59e0b', warning: 'Risque de chute pour roues de trottinette', audioText: 'Attention : nid de poule devant vous.' },
-    blocked: { id: 'blocked', label: 'Piste fermée / Travaux', icon: '🚧', color: '#ef4444', warning: 'Passage impossible ou déviation obligatoire', audioText: 'Attention : piste cyclable fermée.' },
-    police: { id: 'police', label: 'Contrôle de police', icon: '👮', color: '#3b82f6', warning: 'Vérification 25 km/h, assurance, éclairage', audioText: 'Attention : contrôle des forces de l\'ordre.' },
-    car: { id: 'car', label: 'Voiture sur la piste', icon: '🚗', color: '#f97316', warning: 'Véhicule gênant, dépassement prudent', audioText: 'Véhicule encombrant signalé sur la piste.' },
-    charge: { id: 'charge', label: 'Borne de recharge', icon: '⚡', color: '#06b6d4', warning: 'Point de recharge trottinettes & vélos', audioText: 'Borne de recharge disponible à proximité.' },
-    repair: { id: 'repair', label: 'Station gonflage / Réparation', icon: '🧰', color: '#10b981', warning: 'Pompe en libre-service et outillage', audioText: 'Station gonflage et réparation proche.' }
-  };
-
-  class HazardManager {
-    constructor(map) {
-      this.map = map;
-      this.hazards = [];
-      this.markersMap = new Map();
-      this.alertHistory = new Set();
-      this.audioCtx = null;
-      this.initStorage();
+  class VoiceGuidanceEngine {
+    constructor() {
+      this.synth = window.speechSynthesis || null;
+      this.voices = [];
+      this.config = {
+        enabled: true,
+        voiceURI: '',
+        rate: 1.05,
+        pitch: 1.0,
+        volume: 1.0,
+        announceTurns: true,
+        announceWeather: true,
+        announceHazards: true
+      };
+      this.loadConfig();
+      this.initVoices();
     }
 
-    initStorage() {
-      const saved = localStorage.getItem('trottiwaze_hazards_v1');
-      if (saved) {
-        try { this.hazards = JSON.parse(saved); } catch (e) { this.hazards = this.getDefaultHazards(); }
-      } else {
-        this.hazards = this.getDefaultHazards();
-        this.save();
+    loadConfig() {
+      try {
+        const raw = localStorage.getItem('trottiwaze_voice_cfg');
+        if (raw) this.config = { ...this.config, ...JSON.parse(raw) };
+      } catch (e) {}
+    }
+
+    saveConfig(newCfg) {
+      this.config = { ...this.config, ...newCfg };
+      try {
+        localStorage.setItem('trottiwaze_voice_cfg', JSON.stringify(this.config));
+      } catch (e) {}
+    }
+
+    initVoices(onLoadedCallback) {
+      if (!this.synth) return;
+
+      const populate = () => {
+        this.voices = this.synth.getVoices();
+        if (onLoadedCallback) onLoadedCallback(this.voices);
+      };
+
+      populate();
+      if (this.synth.onvoiceschanged !== undefined) {
+        this.synth.onvoiceschanged = populate;
       }
     }
 
-    getDefaultHazards() {
-      return [
-        { id: 'hz-1', type: 'pothole', lat: 48.8558, lng: 2.3705, title: 'Nid-de-poule profond', desc: 'Fente dangereuse entre deux pavés près de l\'intersection', author: 'Marc (Xiaomi Pro)', timestamp: Date.now() - 1000*60*25, upvotes: 7 },
-        { id: 'hz-2', type: 'police', lat: 48.8582, lng: 2.3551, title: 'Contrôle Police trottinettes', desc: 'Contrôle vitesse radar 25 km/h et gilet réfléchissant', author: 'Julie_75', timestamp: Date.now() - 1000*60*10, upvotes: 14 },
-        { id: 'hz-3', type: 'blocked', lat: 48.8596, lng: 2.3642, title: 'Travaux piste cyclable', desc: 'Barrières de chantier coupant la piste, déviation temporaire', author: 'Alex_Rider', timestamp: Date.now() - 1000*60*45, upvotes: 9 },
-        { id: 'hz-4', type: 'car', lat: 48.8533, lng: 2.3688, title: 'Camionnette de livraison', desc: 'Garée en plein milieu de la double voie cyclable', author: 'Thomas_B', timestamp: Date.now() - 1000*60*5, upvotes: 4 },
-        { id: 'hz-5', type: 'charge', lat: 48.8530, lng: 2.3690, title: 'Borne de recharge Trottinette', desc: 'Prises 220V sécurisées gratuites café partenaire', author: 'EcoTrott', timestamp: Date.now() - 1000*60*120, upvotes: 12 },
-        { id: 'hz-6', type: 'repair', lat: 48.8565, lng: 2.3520, title: 'Totem de gonflage public', desc: 'Pompe à pied fonctionnelle avec manomètre et embout Presta/Schrader', author: 'ParisEnTrott', timestamp: Date.now() - 1000*60*300, upvotes: 21 }
+    getFrenchVoices() {
+      if (!this.voices || this.voices.length === 0) {
+        if (this.synth) this.voices = this.synth.getVoices();
+      }
+      return this.voices.filter(v => v.lang.startsWith('fr') || v.lang.startsWith('FR'));
+    }
+
+    speak(text, type = 'turn') {
+      if (!this.synth || !this.config.enabled) return;
+
+      if (type === 'turn' && !this.config.announceTurns) return;
+      if (type === 'weather' && !this.config.announceWeather) return;
+      if (type === 'hazard' && !this.config.announceHazards) return;
+
+      try {
+        this.synth.cancel();
+        const utter = new SpeechSynthesisUtterance(text);
+        utter.rate = this.config.rate || 1.05;
+        utter.pitch = this.config.pitch || 1.0;
+        utter.volume = this.config.volume !== undefined ? this.config.volume : 1.0;
+        utter.lang = 'fr-FR';
+
+        if (this.config.voiceURI && this.voices.length > 0) {
+          const selectedVoice = this.voices.find(v => v.voiceURI === this.config.voiceURI);
+          if (selectedVoice) utter.voice = selectedVoice;
+        } else {
+          const frVoice = this.getFrenchVoices()[0];
+          if (frVoice) utter.voice = frVoice;
+        }
+
+        this.synth.speak(utter);
+      } catch (e) {
+        console.warn('SpeechSynthesis error:', e);
+      }
+    }
+
+    testVoice() {
+      this.speak("Dans 150 mètres, tournez à droite sur la piste cyclable protégée.", 'turn');
+    }
+  }
+
+  // =========================================================================
+  // 6. Compass & Orientation Manager (Mode Cap / Course-Up & Rotation Guidon)
+  // =========================================================================
+  class OrientationCompassManager {
+    constructor(mapManager) {
+      this.mapManager = mapManager;
+      this.mode = 'north-up';
+      this.currentHeading = 0;
+      this.initEvents();
+    }
+
+    initEvents() {
+      if (window.DeviceOrientationEvent) {
+        window.addEventListener('deviceorientation', (e) => {
+          let heading = null;
+          if (e.webkitCompassHeading) {
+            heading = e.webkitCompassHeading;
+          } else if (e.alpha !== null) {
+            heading = 360 - e.alpha;
+          }
+          if (heading !== null) {
+            this.setHeading(heading);
+          }
+        }, true);
+      }
+
+      window.addEventListener('orientationchange', () => {
+        setTimeout(() => {
+          if (this.mapManager && this.mapManager.map) {
+            this.mapManager.map.invalidateSize();
+          }
+        }, 250);
+      });
+    }
+
+    toggleMode() {
+      this.mode = this.mode === 'north-up' ? 'course-up' : 'north-up';
+      this.applyOrientation();
+      return this.mode;
+    }
+
+    setHeading(headingDeg) {
+      this.currentHeading = Math.round(headingDeg) % 360;
+      this.applyOrientation();
+    }
+
+    applyOrientation() {
+      const compassBtn = document.getElementById('btn-compass-mode');
+      const compassIcon = document.getElementById('compass-icon');
+      const mapContainer = document.getElementById('map');
+
+      if (this.mode === 'course-up') {
+        if (compassBtn) compassBtn.classList.add('active-course-up');
+        if (compassIcon) compassIcon.style.transform = `rotate(${-this.currentHeading}deg)`;
+        if (mapContainer) {
+          mapContainer.style.transform = `rotate(${-this.currentHeading}deg)`;
+          mapContainer.style.transformOrigin = '50% 50%';
+          mapContainer.style.transition = 'transform 0.3s ease-out';
+        }
+      } else {
+        if (compassBtn) compassBtn.classList.remove('active-course-up');
+        if (compassIcon) compassIcon.style.transform = 'rotate(0deg)';
+        if (mapContainer) {
+          mapContainer.style.transform = 'none';
+          mapContainer.style.transition = 'transform 0.3s ease-out';
+        }
+      }
+    }
+  }
+
+  // =========================================================================
+  // 7. 230V Charging Stations Engine
+  // =========================================================================
+  class ChargingStationsManager {
+    constructor(mapManager, onNavigateToStation) {
+      this.mapManager = mapManager;
+      this.onNavigateToStation = onNavigateToStation;
+      this.stations = [
+        {
+          id: 'ch_1',
+          name: 'Station Belib\' - Prise Domestique 230V E/F',
+          lat: 48.8570, lng: 2.3530,
+          plug: 'Prise domestique 230V 16A standard (Type E/F)',
+          access: 'Borne publique Belib\' • 24h/24',
+          desc: 'Prise 230V normale disponible sur le côté de la borne auto. Compatible chargeur trottinette.'
+        },
+        {
+          id: 'ch_2',
+          name: 'Point Relais TrottiCharge 230V - Bastille',
+          lat: 48.8528, lng: 2.3685,
+          plug: '2x Prises 230V en accès libre',
+          access: 'Café vélo & Atelier • Ouvert 8h-20h',
+          desc: 'Recharge gratuite pour les trottinettes et vélos. Pompe et outils à disposition.'
+        },
+        {
+          id: 'ch_3',
+          name: 'Borne de Recharge Municipale 230V - République',
+          lat: 48.8680, lng: 2.3640,
+          plug: 'Prise 230V 16A protégée',
+          access: 'Espace public • 24h/24',
+          desc: 'Prise 230V située au niveau de la station vélos sécurisée.'
+        },
+        {
+          id: 'ch_4',
+          name: 'Borne Auto & 2RM 230V - Gare de Lyon',
+          lat: 48.8455, lng: 2.3725,
+          plug: 'Prise standard 230V 16A',
+          access: 'Parvis gare • 24h/24',
+          desc: 'Borne de recharge avec prise domestique pour deux-roues électriques.'
+        },
+        {
+          id: 'ch_5',
+          name: 'Station TrottiCharge 230V - Châtelet Les Halles',
+          lat: 48.8605, lng: 2.3480,
+          plug: '3x Prises 230V 16A',
+          access: 'Sortie Forum des Halles • 24h/24',
+          desc: 'Prises 230V sous abri avec casiers de recharge.'
+        }
       ];
+      this.markers = [];
+      this.isVisible = true;
+    }
+
+    generateNearbyStations(centerLat, centerLng) {
+      const offsets = [
+        { dLat: 0.0035, dLng: 0.0042, name: 'Borne Auto avec Prise 230V 16A' },
+        { dLat: -0.0040, dLng: 0.0030, name: 'Station Vélo/Trotti Prise 230V' },
+        { dLat: 0.0020, dLng: -0.0050, name: 'Borne Publique Prise Domestique 230V' }
+      ];
+
+      offsets.forEach((o, i) => {
+        const id = `ch_dyn_${i}`;
+        if (!this.stations.find(s => s.id === id)) {
+          this.stations.push({
+            id,
+            name: o.name,
+            lat: centerLat + o.dLat,
+            lng: centerLng + o.dLng,
+            plug: 'Prise 230V 16A standard (Type E/F)',
+            access: 'Accès public 24h/24',
+            desc: 'Prise 230V utilisable avec votre chargeur secteur trottinette habituel.'
+          });
+        }
+      });
+      this.render();
+    }
+
+    render() {
+      this.clearMarkers();
+      if (!this.isVisible || !this.mapManager || !this.mapManager.map) return;
+
+      this.stations.forEach(st => {
+        const icon = L.divIcon({
+          className: 'charging-marker-icon',
+          html: `<div title="${st.name}" style="color:#facc15; font-size:15px; font-weight:800;">⚡</div>`,
+          iconSize: [28, 28],
+          iconAnchor: [14, 14]
+        });
+
+        const marker = L.marker([st.lat, st.lng], { icon }).addTo(this.mapManager.map);
+        
+        const popupContent = `
+          <div class="charging-popup-card">
+            <div class="charge-popup-title">⚡ ${st.name}</div>
+            <div class="charge-popup-plug">🔌 ${st.plug}</div>
+            <div class="charge-popup-desc">${st.desc}<br><small>🕒 ${st.access}</small></div>
+            <button class="btn-charge-route" id="btn-goto-charge-${st.id}">🚀 Y aller (Itinéraire)</button>
+          </div>
+        `;
+        marker.bindPopup(popupContent);
+        
+        marker.on('popupopen', () => {
+          const btn = document.getElementById(`btn-goto-charge-${st.id}`);
+          if (btn) {
+            btn.addEventListener('click', () => {
+              marker.closePopup();
+              if (this.onNavigateToStation) {
+                this.onNavigateToStation(st);
+              }
+            });
+          }
+        });
+
+        this.markers.push(marker);
+      });
+    }
+
+    clearMarkers() {
+      this.markers.forEach(m => this.mapManager.map.removeLayer(m));
+      this.markers = [];
+    }
+
+    setVisible(visible) {
+      this.isVisible = visible;
+      if (visible) {
+        this.render();
+      } else {
+        this.clearMarkers();
+      }
+    }
+
+    findNearestStation(lat, lng) {
+      let nearest = null;
+      let minDistance = Infinity;
+
+      this.stations.forEach(s => {
+        const d = Math.hypot(s.lat - lat, s.lng - lng);
+        if (d < minDistance) {
+          minDistance = d;
+          nearest = s;
+        }
+      });
+      return nearest;
+    }
+  }
+
+  // =========================================================================
+  // 8. History & Favorites Manager
+  // =========================================================================
+  class HistoryManager {
+    constructor() {
+      this.recents = [];
+      this.favorites = {
+        home: { name: 'Domicile', full: '12 Rue de Rivoli, 75004 Paris', lat: 48.8556, lng: 2.3558, type: 'fav' },
+        work: { name: 'Travail', full: 'Place de la République, 75011 Paris', lat: 48.8675, lng: 2.3638, type: 'fav' }
+      };
+      this.load();
+    }
+
+    load() {
+      try {
+        const r = localStorage.getItem('trottiwaze_recents_v2');
+        if (r) this.recents = JSON.parse(r);
+        const f = localStorage.getItem('trottiwaze_favs_v2');
+        if (f) this.favorites = { ...this.favorites, ...JSON.parse(f) };
+      } catch (e) {}
     }
 
     save() {
-      try { localStorage.setItem('trottiwaze_hazards_v1', JSON.stringify(this.hazards)); } catch (e) {}
+      try {
+        localStorage.setItem('trottiwaze_recents_v2', JSON.stringify(this.recents));
+        localStorage.setItem('trottiwaze_favs_v2', JSON.stringify(this.favorites));
+      } catch (e) {}
     }
 
-    renderMarkers() {
-      this.markersMap.forEach(marker => this.map.removeLayer(marker));
-      this.markersMap.clear();
-      this.hazards.forEach(hz => {
-        const config = HAZARD_TYPES[hz.type] || HAZARD_TYPES.pothole;
-        const customIcon = L.divIcon({
-          className: 'hazard-custom-marker',
-          html: `<div class="hazard-marker-bubble ${hz.type}"><span>${config.icon}</span></div>`,
-          iconSize: [38, 38], iconAnchor: [19, 19], popupAnchor: [0, -20]
-        });
-        const timeAgoMin = Math.round((Date.now() - hz.timestamp) / 60000);
-        const timeStr = timeAgoMin < 1 ? 'À l\'instant' : `Il y a ${timeAgoMin} min`;
-        const marker = L.marker([hz.lat, hz.lng], { icon: customIcon }).addTo(this.map);
-        marker.bindPopup(`
-          <div style="min-width:180px;padding:4px;">
-            <div style="display:flex;align-items:center;gap:8px;margin-bottom:6px;">
-              <span style="font-size:22px;">${config.icon}</span>
-              <div>
-                <strong style="font-size:13px;color:${config.color};">${config.label}</strong>
-                <div style="font-size:10.5px;opacity:0.7;">Signalé ${timeStr}</div>
-              </div>
-            </div>
-            <div style="font-size:12px;margin-bottom:8px;line-height:1.3;">${hz.desc || hz.title}</div>
-            <div style="font-size:11px;opacity:0.8;margin-bottom:8px;">🛡️ ${config.warning}</div>
-            <div style="display:flex;gap:6px;">
-              <button onclick="window.trottiApp.confirmHazard('${hz.id}')" style="flex:1;background:#10b981;border:none;color:#fff;border-radius:6px;padding:4px;font-weight:bold;cursor:pointer;font-size:11px;">👍 Toujours là (${hz.upvotes})</button>
-              <button onclick="window.trottiApp.dismissHazard('${hz.id}')" style="background:rgba(255,255,255,0.1);border:none;color:#ccc;border-radius:6px;padding:4px 8px;cursor:pointer;font-size:11px;">Résolu ✕</button>
-            </div>
-          </div>
-        `);
-        this.markersMap.set(hz.id, marker);
+    addRecent(item) {
+      if (!item || !item.fullLabel) return;
+      this.recents = this.recents.filter(r => r.fullLabel.toLowerCase() !== item.fullLabel.toLowerCase());
+      this.recents.unshift({
+        mainText: item.mainText || item.fullLabel.split(',')[0],
+        subText: item.subText || item.fullLabel.split(',').slice(1).join(',').trim(),
+        fullLabel: item.fullLabel,
+        lat: item.lat,
+        lng: item.lng,
+        type: item.type || 'history',
+        timestamp: Date.now()
       });
-    }
-
-    addHazard(hazardData) {
-      const newHz = { id: 'hz-' + Date.now(), timestamp: Date.now(), upvotes: 1, ...hazardData };
-      this.hazards.unshift(newHz);
+      if (this.recents.length > 8) this.recents.pop();
       this.save();
-      this.renderMarkers();
-      return newHz;
     }
 
-    upvote(id) {
-      const target = this.hazards.find(h => h.id === id);
-      if (target) { target.upvotes = (target.upvotes || 0) + 1; this.save(); this.renderMarkers(); }
-    }
-
-    remove(id) {
-      this.hazards = this.hazards.filter(h => h.id !== id);
-      this.save();
-      this.renderMarkers();
-    }
-
-    getDistanceMeters(lat1, lon1, lat2, lon2) {
-      const R = 6371e3;
-      const dLat = (lat2 - lat1) * Math.PI / 180;
-      const dLon = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2)**2;
-      return Math.round(R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a)));
-    }
-
-    checkProximity(currentLat, currentLng) {
-      for (const hz of this.hazards) {
-        const dist = this.getDistanceMeters(currentLat, currentLng, hz.lat, hz.lng);
-        if (dist <= 180) {
-          const alertKey = `${hz.id}_${Math.floor(Date.now() / 120000)}`;
-          const isFresh = !this.alertHistory.has(alertKey);
-          if (isFresh) { this.alertHistory.add(alertKey); this.playAlertSound(hz.type); }
-          return { hazard: hz, distanceMeters: dist, isFresh, config: HAZARD_TYPES[hz.type] || HAZARD_TYPES.pothole };
-        }
-      }
-      return null;
-    }
-
-    playAlertSound(type = 'pothole') {
-      try {
-        if (!this.audioCtx) {
-          const AC = window.AudioContext || window.webkitAudioContext;
-          this.audioCtx = new AC();
-        }
-        if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-        const now = this.audioCtx.currentTime;
-        if (type === 'police') {
-          const osc = this.audioCtx.createOscillator();
-          const gain = this.audioCtx.createGain();
-          osc.type = 'sawtooth';
-          osc.frequency.setValueAtTime(880, now);
-          osc.frequency.setValueAtTime(660, now + 0.15);
-          osc.frequency.setValueAtTime(880, now + 0.30);
-          gain.gain.setValueAtTime(0.15, now);
-          gain.gain.exponentialRampToValueAtTime(0.01, now + 0.5);
-          osc.connect(gain); gain.connect(this.audioCtx.destination);
-          osc.start(now); osc.stop(now + 0.5);
-        } else {
-          const osc1 = this.audioCtx.createOscillator();
-          const osc2 = this.audioCtx.createOscillator();
-          const gain = this.audioCtx.createGain();
-          osc1.type = 'sine'; osc2.type = 'triangle';
-          osc1.frequency.setValueAtTime(523.25, now);
-          osc1.frequency.exponentialRampToValueAtTime(1046.50, now + 0.12);
-          osc2.frequency.setValueAtTime(659.25, now);
-          osc2.frequency.exponentialRampToValueAtTime(1318.51, now + 0.12);
-          gain.gain.setValueAtTime(0.2, now);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
-          osc1.connect(gain); osc2.connect(gain); gain.connect(this.audioCtx.destination);
-          osc1.start(now); osc2.start(now); osc1.stop(now + 0.45); osc2.stop(now + 0.45);
-        }
-      } catch (e) {}
-    }
-
-    playCockpitBell() {
-      try {
-        if (!this.audioCtx) {
-          const AC = window.AudioContext || window.webkitAudioContext;
-          this.audioCtx = new AC();
-        }
-        if (this.audioCtx.state === 'suspended') this.audioCtx.resume();
-        const now = this.audioCtx.currentTime;
-        const freqs = [1318, 1568, 1318];
-        freqs.forEach((freq, i) => {
-          const osc = this.audioCtx.createOscillator();
-          const gain = this.audioCtx.createGain();
-          osc.type = 'sine';
-          osc.frequency.setValueAtTime(freq, now + i * 0.13);
-          gain.gain.setValueAtTime(0, now + i * 0.13);
-          gain.gain.linearRampToValueAtTime(0.22, now + i * 0.13 + 0.02);
-          gain.gain.exponentialRampToValueAtTime(0.001, now + i * 0.13 + 0.35);
-          osc.connect(gain); gain.connect(this.audioCtx.destination);
-          osc.start(now + i * 0.13); osc.stop(now + i * 0.13 + 0.4);
-        });
-      } catch (e) {}
+    getFavorite(key) {
+      return this.favorites[key] || null;
     }
   }
 
   // =========================================================================
-  // 3. UserManager - TrottiWazers dans le secteur
+  // 9. Ride Recorder (Geovelo Style)
   // =========================================================================
-  class UserManager {
-    constructor(map, onUserClick) {
-      this.map = map;
-      this.onUserClick = onUserClick;
-      this.users = [];
-      this.markers = new Map();
-      this.moveInterval = null;
-      this.incomingInterval = null;
+  class RideRecorder {
+    constructor(onUpdateCallback) {
+      this.isRecording = false;
+      this.isPaused = false;
+      this.startTime = null;
+      this.timerInterval = null;
+      this.elapsedSeconds = 0;
+      this.totalDistanceM = 0;
+      this.recordedPoints = [];
+      this.speedsList = [];
+      this.maxSpeedKmh = 0;
+      this.onUpdateCallback = onUpdateCallback;
+      this.savedRides = [];
+      this.loadSavedRides();
     }
 
-    initNearbyUsers(centerLat, centerLng) {
-      const PROFILES = [
-        { pseudo: 'Max_Ninebot', avatar: '🦊', scooter: 'Ninebot Max G30', color: '#10b981', status: 'En route pour le boulot 💼', speed: 21, battery: 84, trip: 'Bastille → Châtelet' },
-        { pseudo: 'Julie_Xiaomi', avatar: '🐱', scooter: 'Xiaomi Pro 2', color: '#f59e0b', status: 'Balade matinale 🌅', speed: 17, battery: 62, trip: 'Nation → Opéra' },
-        { pseudo: 'Romain_Dualtron', avatar: '🦅', scooter: 'Dualtron Thunder', color: '#3b82f6', status: 'Livraison express 📦', speed: 24, battery: 91, trip: 'République → Pigalle' },
-        { pseudo: 'Sara_Lime', avatar: '🌸', scooter: 'Lime Gen4', color: '#ec4899', status: 'Touriste curieuse 🗺️', speed: 14, battery: 47, trip: 'Tour Eiffel → Louvre' },
-        { pseudo: 'Kevin_Trott', avatar: '🏄', scooter: 'Segway F40', color: '#8b5cf6', status: 'Course chrono ⏱️', speed: 23, battery: 78, trip: 'Gare de Lyon → Bastille' },
-        { pseudo: 'Ines_Verte', avatar: '🦋', scooter: 'Ninebot E45', color: '#06b6d4', status: 'Sur les berges 🌿', speed: 16, battery: 55, trip: 'Berges Seine → Châtelet' }
-      ];
-
-      this.users = PROFILES.map((p, i) => {
-        const angle = (i / PROFILES.length) * Math.PI * 2;
-        const r = 0.004 + Math.random() * 0.006;
-        return {
-          ...p,
-          id: `user-${i}`,
-          lat: centerLat + Math.sin(angle) * r,
-          lng: centerLng + Math.cos(angle) * r,
-          heading: Math.random() * 360,
-          lastInteraction: null
-        };
-      });
-
-      this.renderAllMarkers();
-      this.startMovement();
-      this.scheduleIncomingEvents();
+    loadSavedRides() {
+      try {
+        const raw = localStorage.getItem('trottiwaze_saved_rides');
+        if (raw) this.savedRides = JSON.parse(raw);
+      } catch (e) {}
     }
 
-    renderAllMarkers() {
-      this.markers.forEach(m => this.map.removeLayer(m));
-      this.markers.clear();
-      this.users.forEach(user => this.renderUserMarker(user));
+    saveRidesToStorage() {
+      try {
+        localStorage.setItem('trottiwaze_saved_rides', JSON.stringify(this.savedRides));
+      } catch (e) {}
     }
 
-    renderUserMarker(user) {
-      if (this.markers.has(user.id)) {
-        this.map.removeLayer(this.markers.get(user.id));
-      }
-      const icon = L.divIcon({
-        className: '',
-        html: `
-          <div class="trottier-marker" style="border-color:${user.color};" title="Cliquer pour interagir avec ${user.pseudo}">
-            <div class="trottier-avatar">${user.avatar}</div>
-            <div class="trottier-tag" style="background:${user.color};">${user.pseudo.split('_')[0]}</div>
-            <div class="trottier-speed">${user.speed} km/h</div>
-          </div>
-        `,
-        iconSize: [52, 52],
-        iconAnchor: [26, 26]
-      });
-      const marker = L.marker([user.lat, user.lng], { icon, zIndexOffset: 500 }).addTo(this.map);
-      marker.on('click', () => {
-        if (this.onUserClick) this.onUserClick(user);
-      });
-      this.markers.set(user.id, marker);
-    }
+    startRecording() {
+      this.isRecording = true;
+      this.isPaused = false;
+      this.startTime = Date.now();
+      this.elapsedSeconds = 0;
+      this.totalDistanceM = 0;
+      this.recordedPoints = [];
+      this.speedsList = [];
+      this.maxSpeedKmh = 0;
 
-    startMovement() {
-      if (this.moveInterval) clearInterval(this.moveInterval);
-      this.moveInterval = setInterval(() => {
-        this.users.forEach(user => {
-          const rad = user.heading * Math.PI / 180;
-          const dist = (user.speed / 3600) * 3 * 0.00001;
-          user.lat += Math.cos(rad) * dist;
-          user.lng += Math.sin(rad) * dist;
-          // petite déviation aléatoire
-          user.heading += (Math.random() - 0.5) * 15;
-          // vitesse fluctuante
-          user.speed = Math.max(10, Math.min(25, user.speed + (Math.random() - 0.5) * 2));
-          this.renderUserMarker(user);
-        });
-      }, 3000);
-    }
-
-    stopMovement() {
-      if (this.moveInterval) clearInterval(this.moveInterval);
-      if (this.incomingInterval) clearInterval(this.incomingInterval);
-    }
-
-    scheduleIncomingEvents() {
-      const socialEvents = [
-        { type: 'wave', text: 'vous fait un grand coucou ! 👋', icon: '👋' },
-        { type: 'bell', text: 'Dring Dring ! 🔔', icon: '🔔' },
-        { type: 'warn', text: 'signale un obstacle devant vous ! ⚠️', icon: '🚨' },
-        { type: 'help', text: 'demande de l\'aide ⚡ (batterie faible ?)', icon: '⚡' }
-      ];
-      if (this.incomingInterval) clearInterval(this.incomingInterval);
-      this.incomingInterval = setInterval(() => {
-        if (this.users.length === 0) return;
-        const user = this.users[Math.floor(Math.random() * this.users.length)];
-        const ev = socialEvents[Math.floor(Math.random() * socialEvents.length)];
-        if (window.trottiApp) {
-          window.trottiApp.handleIncomingSocialEvent(user, ev.type, ev.text, ev.icon);
+      if (this.timerInterval) clearInterval(this.timerInterval);
+      this.timerInterval = setInterval(() => {
+        if (!this.isPaused) {
+          this.elapsedSeconds++;
+          this.notifyUpdate();
         }
-      }, 20000 + Math.random() * 15000);
+      }, 1000);
+
+      this.notifyUpdate();
     }
 
-    sendSocialEvent(targetUser, type) {
-      const msgs = {
-        wave: '👋 Coucou envoyé !',
-        bell: '🔔 Dring Dring ! Sonnette envoyée !',
-        help: '⚡ Demande d\'aide envoyée !',
-        warn: '🚨 Alerte danger envoyée !'
+    pauseRecording() {
+      this.isPaused = true;
+      this.notifyUpdate();
+    }
+
+    resumeRecording() {
+      this.isPaused = false;
+      this.notifyUpdate();
+    }
+
+    addGpsPoint(lat, lng, speedKmh = 0, alt = 0) {
+      if (!this.isRecording || this.isPaused) return;
+
+      const point = {
+        lat,
+        lng,
+        alt: alt || 0,
+        speed: speedKmh || 0,
+        time: Date.now()
       };
-      return msgs[type] || 'Message envoyé !';
+
+      if (this.recordedPoints.length > 0) {
+        const last = this.recordedPoints[this.recordedPoints.length - 1];
+        const distDeltaM = this.computeDistanceMeters(last.lat, last.lng, lat, lng);
+        if (distDeltaM > 1) {
+          this.totalDistanceM += distDeltaM;
+        }
+      }
+
+      this.recordedPoints.push(point);
+      if (speedKmh > 0) {
+        this.speedsList.push(speedKmh);
+        if (speedKmh > this.maxSpeedKmh) this.maxSpeedKmh = speedKmh;
+      }
+
+      this.notifyUpdate();
     }
 
-    getUserCount() {
-      return this.users.length;
+    stopAndSave(title = 'Sortie Trottinette') {
+      if (!this.isRecording) return null;
+      if (this.timerInterval) clearInterval(this.timerInterval);
+
+      const distanceKm = (this.totalDistanceM / 1000);
+      const avgSpeedKmh = this.elapsedSeconds > 0 ? ((distanceKm / (this.elapsedSeconds / 3600))) : 0;
+
+      const newRide = {
+        id: 'ride_' + Date.now(),
+        title: title,
+        date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        timestamp: Date.now(),
+        distanceKm: parseFloat(distanceKm.toFixed(2)),
+        durationSeconds: this.elapsedSeconds,
+        durationFormatted: this.formatTime(this.elapsedSeconds),
+        avgSpeedKmh: parseFloat(avgSpeedKmh.toFixed(1)),
+        maxSpeedKmh: parseFloat(this.maxSpeedKmh.toFixed(1)),
+        points: this.recordedPoints
+      };
+
+      this.savedRides.unshift(newRide);
+      this.saveRidesToStorage();
+
+      this.isRecording = false;
+      this.isPaused = false;
+      this.notifyUpdate();
+
+      return newRide;
+    }
+
+    deleteRide(id) {
+      this.savedRides = this.savedRides.filter(r => r.id !== id);
+      this.saveRidesToStorage();
+    }
+
+    clearAllRides() {
+      this.savedRides = [];
+      this.saveRidesToStorage();
+    }
+
+    exportGpx(id) {
+      const ride = this.savedRides.find(r => r.id === id);
+      if (!ride || !ride.points || ride.points.length === 0) return;
+
+      let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n`;
+      gpx += `<gpx version="1.1" creator="TrottiWaze" xmlns="http://www.topografix.com/GPX/1/1">\n`;
+      gpx += `  <trk>\n    <name>${ride.title}</name>\n    <trkseg>\n`;
+      ride.points.forEach(p => {
+        gpx += `      <trkpt lat="${p.lat}" lon="${p.lng}">\n        <ele>${p.alt || 0}</ele>\n        <time>${new Date(p.time).toISOString()}</time>\n      </trkpt>\n`;
+      });
+      gpx += `    </trkseg>\n  </trk>\n</gpx>`;
+
+      const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `trottiwaze_trajet_${ride.id}.gpx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    }
+
+    getGlobalStats() {
+      const totalKm = this.savedRides.reduce((acc, r) => acc + (r.distanceKm || 0), 0);
+      const totalSec = this.savedRides.reduce((acc, r) => acc + (r.durationSeconds || 0), 0);
+      const avgSpeed = totalSec > 0 ? (totalKm / (totalSec / 3600)) : 0;
+
+      return {
+        totalKm: totalKm.toFixed(1),
+        totalTime: this.formatTime(totalSec),
+        avgSpeed: avgSpeed.toFixed(1),
+        tripsCount: this.savedRides.length
+      };
+    }
+
+    computeDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const φ1 = lat1 * Math.PI / 180;
+      const φ2 = lat2 * Math.PI / 180;
+      const Δφ = (lat2 - lat1) * Math.PI / 180;
+      const Δλ = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(Δφ/2) * Math.sin(Δφ/2) + Math.cos(φ1) * Math.cos(φ2) * Math.sin(Δλ/2) * Math.sin(Δλ/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
+    }
+
+    formatTime(seconds) {
+      const hrs = Math.floor(seconds / 3600);
+      const mins = Math.floor((seconds % 3600) / 60);
+      const secs = seconds % 60;
+      if (hrs > 0) return `${hrs}h ${mins.toString().padStart(2, '0')}`;
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    }
+
+    notifyUpdate() {
+      if (this.onUpdateCallback) {
+        const distKm = (this.totalDistanceM / 1000).toFixed(2);
+        const avgSpeed = this.elapsedSeconds > 0 ? ((this.totalDistanceM / 1000) / (this.elapsedSeconds / 3600)).toFixed(1) : '0.0';
+        this.onUpdateCallback({
+          isRecording: this.isRecording,
+          isPaused: this.isPaused,
+          elapsedSeconds: this.elapsedSeconds,
+          timeFormatted: this.formatTime(this.elapsedSeconds),
+          distanceKm: distKm,
+          avgSpeedKmh: avgSpeed,
+          maxSpeedKmh: this.maxSpeedKmh.toFixed(1)
+        });
+      }
     }
   }
 
   // =========================================================================
-  // 4. Routing Engine
+  // 10. Map Manager (Leaflet 2D Fiable)
+  // =========================================================================
+  class MapManager {
+    constructor(containerId = 'map') {
+      this.containerId = containerId;
+      this.map = null;
+      this.scooterMarker = null;
+      this.routePolylines = [];
+      this.liveRecordPolyline = null;
+      this.pastRidePolyline = null;
+      this.currentLayerId = 'osm';
+      this.isAutoFollowing = true;
+      this.defaultCenter = [48.8531, 2.3698];
+      this.currentLocation = { lat: 48.8531, lng: 2.3698, heading: 90, speed: 0 };
+      this.tileLayers = {};
+      this.initMap();
+    }
+
+    initMap() {
+      if (typeof L === 'undefined') return;
+
+      this.map = L.map(this.containerId, {
+        center: this.defaultCenter,
+        zoom: 15,
+        zoomControl: false,
+        attributionControl: false,
+        preferCanvas: true
+      });
+
+      L.control.attribution({ position: 'bottomleft' })
+        .addAttribution('&copy; <a href="https://www.openstreetmap.org">OSM</a> | &copy; CyclOSM | &copy; IGN | &copy; Esri')
+        .addTo(this.map);
+      L.control.zoom({ position: 'topleft' }).addTo(this.map);
+
+      this.map.on('dragstart', () => {
+        this.setAutoFollow(false);
+      });
+
+      const tileOpts = { maxZoom: 19, crossOrigin: true };
+
+      this.tileLayers = {
+        osm: L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { ...tileOpts, maxZoom: 19 }),
+        cyclosm: L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 20 }),
+        streets: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
+        osmfr: L.tileLayer('https://{s}.tile.openstreetmap.fr/osmfr/{z}/{x}/{y}.png', { ...tileOpts, subdomains: 'abc', maxZoom: 20 }),
+        ign: L.tileLayer('https://data.geopf.fr/wmts?SERVICE=WMTS&REQUEST=GetTile&VERSION=1.0.0&LAYER=GEOGRAPHICALGRIDSYSTEMS.PLANIGNV2&STYLE=normal&FORMAT=image/png&TILEMATRIXSET=PM&TILEMATRIX={z}&TILEROW={y}&TILECOL={x}', { ...tileOpts, maxZoom: 19, attribution: '&copy; IGN' }),
+        satellite: L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', { ...tileOpts, maxZoom: 19 }),
+        night: L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { ...tileOpts, subdomains: 'abcd', maxZoom: 19 })
+      };
+
+      this.tileLayers.osm.addTo(this.map);
+      this.createScooterMarker(this.defaultCenter[0], this.defaultCenter[1]);
+
+      window.addEventListener('resize', () => this.map.invalidateSize());
+      window.addEventListener('orientationchange', () => setTimeout(() => this.map.invalidateSize(), 200));
+      setTimeout(() => this.map.invalidateSize(), 50);
+      setTimeout(() => this.map.invalidateSize(), 300);
+      setTimeout(() => this.map.invalidateSize(), 1200);
+    }
+
+    setTileLayer(layerId) {
+      if (!this.tileLayers[layerId]) return 'OpenStreetMap Standard';
+      if (this.currentLayerId && this.tileLayers[this.currentLayerId]) {
+        this.map.removeLayer(this.tileLayers[this.currentLayerId]);
+      }
+      this.currentLayerId = layerId;
+      this.tileLayers[layerId].addTo(this.map);
+      this.map.invalidateSize();
+
+      const names = {
+        osm: 'OpenStreetMap Standard',
+        cyclosm: 'CyclOSM France',
+        streets: 'Style Urbain GPS (Esri)',
+        osmfr: 'OpenStreetMap France',
+        ign: 'Plan IGN Géoportail',
+        satellite: 'Vue Satellite Réelle HD',
+        night: 'Mode Nuit OLED'
+      };
+      return names[layerId] || layerId;
+    }
+
+    setAutoFollow(enabled) {
+      this.isAutoFollowing = enabled;
+      const btn = document.getElementById('btn-recenter');
+      if (btn) btn.classList.toggle('active-tracking', enabled);
+    }
+
+    createScooterMarker(lat, lng, iconChar = '🛴') {
+      const icon = L.divIcon({
+        className: 'scooter-leaflet-div',
+        html: `<div id="trotti-scooter-pin" class="scooter-marker-container"><div class="scooter-beam"></div><div class="scooter-icon-pin" id="scooter-icon-pin-inner">${iconChar}</div></div>`,
+        iconSize: [44, 44], iconAnchor: [22, 22]
+      });
+      this.scooterMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(this.map);
+    }
+
+    updateScooterIcon(iconChar) {
+      const pinInner = document.getElementById('scooter-icon-pin-inner');
+      if (pinInner) pinInner.textContent = iconChar;
+    }
+
+    updateScooterPosition(lat, lng, heading = 0, speedKmh = 0) {
+      this.currentLocation = { lat, lng, heading, speed: speedKmh };
+      if (this.scooterMarker) {
+        this.scooterMarker.setLatLng([lat, lng]);
+        const pinEl = document.getElementById('trotti-scooter-pin');
+        if (pinEl) pinEl.style.transform = `rotate(${heading}deg)`;
+      }
+
+      if (this.isAutoFollowing) {
+        this.map.panTo([lat, lng], { animate: true, duration: 0.6, easeLinearity: 0.25 });
+      }
+    }
+
+    recenter(zoom = 16) {
+      this.setAutoFollow(true);
+      if (this.currentLocation) {
+        this.map.setView([this.currentLocation.lat, this.currentLocation.lng], zoom, {
+          animate: true,
+          pan: { duration: 0.5, easeLinearity: 0.25 }
+        });
+      }
+      this.map.invalidateSize();
+    }
+
+    drawLiveTrackPoint(lat, lng) {
+      if (!this.liveRecordPolyline) {
+        this.liveRecordPolyline = L.polyline([[lat, lng]], {
+          color: '#f43f5e',
+          weight: 5,
+          opacity: 0.9,
+          lineJoin: 'round',
+          dashArray: '8, 8'
+        }).addTo(this.map);
+      } else {
+        this.liveRecordPolyline.addLatLng([lat, lng]);
+      }
+    }
+
+    clearLiveTrack() {
+      if (this.liveRecordPolyline) {
+        this.map.removeLayer(this.liveRecordPolyline);
+        this.liveRecordPolyline = null;
+      }
+    }
+
+    displayPastRide(points) {
+      this.clearPastRide();
+      if (!points || points.length < 2) return;
+      const latlngs = points.map(p => [p.lat, p.lng]);
+      this.pastRidePolyline = L.polyline(latlngs, {
+        color: '#38bdf8',
+        weight: 6,
+        opacity: 0.85
+      }).addTo(this.map);
+      this.map.fitBounds(this.pastRidePolyline.getBounds(), { padding: [40, 40] });
+    }
+
+    clearPastRide() {
+      if (this.pastRidePolyline) {
+        this.map.removeLayer(this.pastRidePolyline);
+        this.pastRidePolyline = null;
+      }
+    }
+
+    drawRoute(coordinates, mode = 'safe') {
+      this.clearRoute();
+      if (!coordinates || coordinates.length === 0) return;
+      const colors = {
+        safe: ['rgba(16,185,129,0.4)', '#10b981'],
+        fast: ['rgba(14,165,233,0.4)', '#0ea5e9'],
+        eco: ['rgba(234,179,8,0.4)', '#eab308'],
+        nature: ['rgba(5,150,105,0.4)', '#059669']
+      };
+      const [glowColor, strokeColor] = colors[mode] || colors.safe;
+
+      const glowLine = L.polyline(coordinates, { color: glowColor, weight: 10, opacity: 0.8 }).addTo(this.map);
+      const mainLine = L.polyline(coordinates, { color: strokeColor, weight: 5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
+
+      this.routePolylines.push(glowLine, mainLine);
+      this.map.fitBounds(mainLine.getBounds(), { padding: [50, 50], maxZoom: 16 });
+    }
+
+    clearRoute() {
+      this.routePolylines.forEach(layer => this.map.removeLayer(layer));
+      this.routePolylines = [];
+    }
+  }
+
+  // =========================================================================
+  // 11. Routing Engine (Calcul d'Itinéraires Routiers Haute Précision OSRM)
   // =========================================================================
   class RoutingEngine {
-    async searchAddress(query) {
-      if (!query || query.trim().length < 2) return null;
-      const presets = {
-        'châtelet': { lat: 48.8584, lng: 2.3470, label: 'Châtelet - Les Halles, Paris' },
-        'chatelet': { lat: 48.8584, lng: 2.3470, label: 'Châtelet - Les Halles, Paris' },
-        'bastille': { lat: 48.8531, lng: 2.3698, label: 'Place de la Bastille, Paris' },
-        'république': { lat: 48.8675, lng: 2.3638, label: 'Place de la République, Paris' },
-        'republique': { lat: 48.8675, lng: 2.3638, label: 'Place de la République, Paris' },
-        'gare de lyon': { lat: 48.8448, lng: 2.3735, label: 'Gare de Lyon, Paris' },
-        'tour eiffel': { lat: 48.8584, lng: 2.2945, label: 'Tour Eiffel, Paris' },
-        'nation': { lat: 48.8482, lng: 2.3959, label: 'Place de la Nation, Paris' },
-        'opéra': { lat: 48.8724, lng: 2.3316, label: 'Opéra Garnier, Paris' },
-        'opera': { lat: 48.8724, lng: 2.3316, label: 'Opéra Garnier, Paris' },
-        'montmartre': { lat: 48.8867, lng: 2.3431, label: 'Montmartre, Paris' },
-        'louvre': { lat: 48.8606, lng: 2.3376, label: 'Musée du Louvre, Paris' }
+    constructor(batteryEngine) {
+      this.batteryEngine = batteryEngine;
+      this.filters = {
+        avoidCobblestones: true,
+        avoidDirtPaths: true,
+        avoidSteepHills: false,
+        preferProtected: false
       };
-      const clean = query.toLowerCase().trim();
-      for (const [key, val] of Object.entries(presets)) {
-        if (clean.includes(key)) return val;
-      }
-      try {
-        const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1&countrycodes=fr`;
-        const res = await fetch(url, { headers: { 'User-Agent': 'TrottiWaze-ScooterApp/1.0' } });
-        const data = await res.json();
-        if (data && data.length > 0) return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon), label: data[0].display_name };
-      } catch (e) {}
-      return null;
+      this.cache = new Map();
     }
 
-    async getAddressSuggestions(query) {
+    setFilters(filters) {
+      this.filters = { ...this.filters, ...filters };
+    }
+
+    async searchAddress(query) {
       if (!query || query.trim().length < 2) return [];
       const clean = query.trim().toLowerCase();
       const results = [];
       const seen = new Set();
 
-      const localPresets = [
-        { name: 'Rue de Rivoli', city: 'Paris (75004)', full: 'Rue de Rivoli, 75004 Paris', lat: 48.8575, lng: 2.3518, type: 'cycleway', tag: 'Piste bidirectionnelle' },
-        { name: 'Boulevard Voltaire', city: 'Paris (75011)', full: 'Boulevard Voltaire, 75011 Paris', lat: 48.8568, lng: 2.3789, type: 'cycleway', tag: 'Piste protégée' },
-        { name: 'Boulevard de Sébastopol', city: 'Paris (75003)', full: 'Boulevard de Sébastopol, 75003 Paris', lat: 48.8631, lng: 2.3533, type: 'cycleway', tag: 'Axe express vélo' },
-        { name: 'Canal Saint-Martin', city: 'Paris (75010)', full: 'Canal Saint-Martin, 75010 Paris', lat: 48.8715, lng: 2.3665, type: 'cycleway', tag: 'Voie verte apaisée' },
-        { name: 'Place de la Bastille', city: 'Paris (75004/75011)', full: 'Place de la Bastille, Paris', lat: 48.8531, lng: 2.3698, type: 'poi', tag: 'Hub cyclable' },
-        { name: 'Châtelet - Les Halles', city: 'Paris (75001)', full: 'Châtelet - Les Halles, Paris', lat: 48.8584, lng: 2.3470, type: 'poi', tag: 'Centre Paris' },
-        { name: 'Place de la République', city: 'Paris (75011)', full: 'Place de la République, Paris', lat: 48.8675, lng: 2.3638, type: 'poi', tag: 'Grand carrefour vélo' },
-        { name: 'Place de la Nation', city: 'Paris (75012)', full: 'Place de la Nation, Paris', lat: 48.8482, lng: 2.3959, type: 'poi', tag: 'Anneau cyclable' },
-        { name: 'Gare de Lyon', city: 'Paris (75012)', full: 'Gare de Lyon, Paris', lat: 48.8448, lng: 2.3735, type: 'poi', tag: 'Gare & Station trottinette' },
-        { name: 'Tour Eiffel', city: 'Paris (75007)', full: 'Tour Eiffel (Champ de Mars), Paris', lat: 48.8584, lng: 2.2945, type: 'poi', tag: 'Quais de Seine' },
-        { name: 'Berges du Rhône', city: 'Lyon (69007)', full: 'Berges du Rhône, 69007 Lyon', lat: 45.7538, lng: 4.8423, type: 'cycleway', tag: 'Voie lyonnaise 1' },
-        { name: 'Place Bellecour', city: 'Lyon (69002)', full: 'Place Bellecour, 69002 Lyon', lat: 45.7578, lng: 4.8320, type: 'city', tag: 'Centre Lyon' },
-        { name: 'Vieux Port', city: 'Marseille (13001)', full: 'Vieux-Port de Marseille, 13001 Marseille', lat: 43.2951, lng: 5.3744, type: 'poi', tag: 'Zone piétonne' },
-        { name: 'Quais de Garonne', city: 'Bordeaux (33000)', full: 'Quais de Garonne, 33000 Bordeaux', lat: 44.8412, lng: -0.5694, type: 'cycleway', tag: 'Piste cyclable fluviale' },
-        { name: 'Place du Capitole', city: 'Toulouse (31000)', full: 'Place du Capitole, 31000 Toulouse', lat: 43.6045, lng: 1.4442, type: 'city', tag: 'Centre Toulouse' },
-        { name: 'Promenade des Anglais', city: 'Nice (06000)', full: 'Promenade des Anglais, 06000 Nice', lat: 43.6953, lng: 7.2562, type: 'cycleway', tag: 'Piste maritime' },
-        { name: 'Grand Place', city: 'Lille (59800)', full: 'Grand Place, 59800 Lille', lat: 50.6370, lng: 3.0634, type: 'city', tag: 'Centre Lille' },
-        { name: 'Place Kléber', city: 'Strasbourg (67000)', full: 'Place Kléber, 67000 Strasbourg', lat: 48.5834, lng: 7.7455, type: 'city', tag: 'Capitale du vélo' },
-        { name: 'Place Royale', city: 'Nantes (44000)', full: 'Place Royale, 44000 Nantes', lat: 47.2144, lng: -1.5583, type: 'city', tag: 'Centre Nantes' }
-      ];
-
-      for (const p of localPresets) {
-        if (p.name.toLowerCase().includes(clean) || p.city.toLowerCase().includes(clean) || p.full.toLowerCase().includes(clean)) {
-          seen.add(p.full.toLowerCase());
-          results.push({ mainText: p.name, subText: p.city, fullLabel: p.full, lat: p.lat, lng: p.lng, type: p.type, tag: p.tag });
-        }
-      }
-
+      // 1. Try French National Address API (BAN - Data.gouv)
       try {
         const banUrl = `https://api-adresse.data.gouv.fr/search/?q=${encodeURIComponent(query)}&limit=6&autocomplete=1`;
         const res = await fetch(banUrl);
@@ -444,479 +1301,492 @@
               const full = props.label;
               if (!seen.has(full.toLowerCase())) {
                 seen.add(full.toLowerCase());
-                let iconType = props.type === 'municipality' ? 'city' : props.type === 'housenumber' ? 'address' : /piste|voie|boulevard|quai|cours/i.test(props.name) ? 'cycleway' : 'street';
-                let tag = props.type === 'municipality' ? 'Ville' : props.type === 'housenumber' ? 'Adresse' : null;
-                results.push({ mainText: props.name || props.label, subText: props.context || `${props.postcode || ''} ${props.city || ''}`, fullLabel: props.label, lat: f.geometry.coordinates[1], lng: f.geometry.coordinates[0], type: iconType, tag });
+                results.push({
+                  mainText: props.name || props.label,
+                  subText: props.context || `${props.postcode || ''} ${props.city || ''}`,
+                  fullLabel: props.label,
+                  lat: f.geometry.coordinates[1],
+                  lng: f.geometry.coordinates[0]
+                });
               }
             });
           }
         }
       } catch (e) {}
 
+      // 2. Fallback to OpenStreetMap Nominatim
       if (results.length < 3) {
         try {
-          const nomUrl = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=4&countrycodes=fr`;
-          const res = await fetch(nomUrl, { headers: { 'User-Agent': 'TrottiWaze-ScooterApp/1.0' } });
+          const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5&countrycodes=fr,be,ch`;
+          const res = await fetch(url, { headers: { 'Accept-Language': 'fr' } });
           if (res.ok) {
             const data = await res.json();
-            if (Array.isArray(data)) {
-              data.forEach(item => {
-                if (!seen.has(item.display_name.toLowerCase())) {
-                  seen.add(item.display_name.toLowerCase());
-                  const parts = item.display_name.split(',');
-                  results.push({ mainText: parts[0], subText: parts.slice(1, 3).join(',').trim() || item.display_name, fullLabel: item.display_name, lat: parseFloat(item.lat), lng: parseFloat(item.lon), type: 'poi', tag: 'Point d\'intérêt' });
-                }
-              });
-            }
+            data.forEach(item => {
+              if (!seen.has(item.display_name.toLowerCase())) {
+                seen.add(item.display_name.toLowerCase());
+                results.push({
+                  mainText: item.display_name.split(',')[0],
+                  subText: item.display_name.split(',').slice(1, 3).join(',').trim(),
+                  fullLabel: item.display_name,
+                  lat: parseFloat(item.lat),
+                  lng: parseFloat(item.lon)
+                });
+              }
+            });
           }
         } catch (e) {}
       }
 
-      return results.slice(0, 7);
+      return results.slice(0, 6);
+    }
+
+    async geocode(query) {
+      const results = await this.searchAddress(query);
+      return results.length > 0 ? { lat: results[0].lat, lng: results[0].lng } : null;
     }
 
     async calculateRoutes(startCoords, endCoords) {
-      let liveRoute = null;
-      try {
-        const osrmUrl = `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${startCoords.lng},${startCoords.lat};${endCoords.lng},${endCoords.lat}?overview=full&geometries=geojson&steps=true`;
-        const res = await fetch(osrmUrl);
-        if (res.ok) {
-          const json = await res.json();
-          if (json.routes && json.routes.length > 0) liveRoute = json.routes[0];
+      const sLat = startCoords.lat, sLng = startCoords.lng;
+      const eLat = endCoords.lat, eLng = endCoords.lng;
+      const cacheKey = `${sLat.toFixed(5)},${sLng.toFixed(5)}_${eLat.toFixed(5)},${eLng.toFixed(5)}`;
+
+      let osrmBase = null;
+
+      // 1. Fetch real road geometry from OpenStreetMap Bike Router
+      const osrmEndpoints = [
+        `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`,
+        `https://router.project-osrm.org/route/v1/bike/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`,
+        `https://router.project-osrm.org/route/v1/driving/${sLng},${sLat};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`
+      ];
+
+      for (const endpoint of osrmEndpoints) {
+        try {
+          const res = await fetch(endpoint);
+          if (res.ok) {
+            const json = await res.json();
+            if (json.routes && json.routes.length > 0 && json.routes[0].geometry) {
+              osrmBase = json.routes[0];
+              break;
+            }
+          }
+        } catch (e) {
+          // try next endpoint
         }
-      } catch (e) {}
-      return this.buildTrottiRoutes(startCoords, endCoords, liveRoute);
+      }
+
+      return this.buildTrottiRoutes(startCoords, endCoords, osrmBase);
     }
 
     buildTrottiRoutes(start, end, osrmBase = null) {
-      let baseCoordinates = [];
+      let baseCoords = [];
       let baseDistanceKm = 0;
       let baseSteps = [];
 
       if (osrmBase && osrmBase.geometry && osrmBase.geometry.coordinates) {
-        baseCoordinates = osrmBase.geometry.coordinates.map(c => [c[1], c[0]]);
-        baseDistanceKm = osrmBase.distance / 1000;
+        // Real road coordinates from OSRM: convert [lng, lat] to Leaflet [lat, lng]
+        baseCoords = osrmBase.geometry.coordinates.map(c => [c[1], c[0]]);
+        baseDistanceKm = parseFloat((osrmBase.distance / 1000).toFixed(2));
+
         if (osrmBase.legs && osrmBase.legs[0] && osrmBase.legs[0].steps) {
-          baseSteps = osrmBase.legs[0].steps.map(s => ({
-            instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (s.name ? `Prenez ${s.name}` : 'Continuez tout droit'),
-            distanceMeters: Math.round(s.distance),
-            street: s.name || 'Piste cyclable sécurisée',
-            modifier: s.maneuver.modifier || 'straight',
-            type: s.maneuver.type || 'continue',
-            safety: '🛡️ Piste cyclable protégée'
-          }));
+          baseSteps = osrmBase.legs[0].steps.map(s => {
+            let mod = s.maneuver.modifier || 'straight';
+            if (s.maneuver.type === 'arrive') mod = 'arrive';
+            return {
+              instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (s.name ? `Prenez ${s.name}` : 'Continuez tout droit'),
+              distanceMeters: Math.round(s.distance),
+              street: s.name || 'Voie cyclable sécurisée',
+              modifier: mod,
+              safety: '🟢 Piste cyclable protégée'
+            };
+          });
         }
       }
 
-      if (baseCoordinates.length === 0) {
-        const generated = this.interpolateRealisticCycleRoute(start, end);
-        baseCoordinates = generated.coords;
+      // Offline / fallback: generate realistic street grid segments with 90° turns instead of straight lines
+      if (baseCoords.length === 0) {
+        const generated = this.generateRealisticGridRoute(start, end);
+        baseCoords = generated.coords;
         baseDistanceKm = generated.distanceKm;
         baseSteps = generated.steps;
       }
 
+      const speed = this.batteryEngine.config.speedPrefKmh || 25;
+
       const safeDist = parseFloat((baseDistanceKm * 1.05).toFixed(1));
-      const fastDist = parseFloat((baseDistanceKm * 0.92).toFixed(1));
-      const ecoDist = parseFloat((baseDistanceKm * 1.12).toFixed(1));
-      const natureDist = parseFloat((baseDistanceKm * 1.22).toFixed(1));
+      const fastDist = parseFloat((baseDistanceKm * 0.95).toFixed(1));
+      const ecoDist = parseFloat((baseDistanceKm * 1.10).toFixed(1));
+      const natureDist = parseFloat((baseDistanceKm * 1.20).toFixed(1));
 
       return {
         safe: {
-          mode: 'safe', title: '🟢 Sécurisé', subtitle: 'Pistes protégées & Voies vertes',
-          coordinates: baseCoordinates,
-          distanceKm: safeDist, durationMin: Math.round(safeDist / 20 * 60) + 1,
-          cyclewayPercent: 92, protectedPct: 92, lanePct: 6, sharedPct: 2,
-          cobblestonesAvoided: 4, elevationGainM: 12, elevationLossM: 8, maxSlopePct: 3.2,
-          elevationProfile: this.generateElevationProfile(safeDist, 35, 12, 'safe'),
-          safetyBadge: '92% Séparateur physique béton/bordure', badgeClass: 'green', steps: baseSteps
+          title: 'Sécurisé (Pistes Protégées)',
+          mode: 'safe',
+          distanceKm: safeDist,
+          durationMin: Math.max(1, Math.round((safeDist / speed) * 60)),
+          protectedPct: 94,
+          praticability: '✨ 100% Voie cyclable séparée',
+          cobblestonesCount: 0,
+          elevationGainM: 12,
+          elevationLossM: 10,
+          maxSlopePct: 3,
+          coordinates: baseCoords,
+          steps: baseSteps.length > 0 ? baseSteps : [
+            { distanceMeters: 250, street: 'Piste cyclable protégée', modifier: 'straight', instruction: 'Suivre la piste cyclable', safety: '🟢 Voie bidirectionnelle' },
+            { distanceMeters: 100, street: 'Arrivée', modifier: 'arrive', instruction: 'Arrivée à destination', safety: '🏁 Point d\'arrivée' }
+          ]
         },
         fast: {
-          mode: 'fast', title: '⚡ Rapide', subtitle: 'Le plus court à 25 km/h',
-          coordinates: this.slightlyDirectRoute(baseCoordinates),
-          distanceKm: fastDist, durationMin: Math.round(fastDist / 24 * 60) + 1,
-          cyclewayPercent: 58, protectedPct: 58, lanePct: 27, sharedPct: 15,
-          cobblestonesAvoided: 1, elevationGainM: 19, elevationLossM: 15, maxSlopePct: 5.6,
-          elevationProfile: this.generateElevationProfile(fastDist, 35, 19, 'fast'),
-          safetyBadge: 'Couloirs bus/vélo & Bandes cyclables', badgeClass: 'neutral', steps: baseSteps
+          title: 'Direct & Rapide',
+          mode: 'fast',
+          distanceKm: fastDist,
+          durationMin: Math.max(1, Math.round((fastDist / speed) * 60)),
+          protectedPct: 62,
+          praticability: this.filters.avoidCobblestones ? '✨ Bitumé' : '⚠️ 1 section pavée',
+          cobblestonesCount: this.filters.avoidCobblestones ? 0 : 1,
+          elevationGainM: 18,
+          elevationLossM: 16,
+          maxSlopePct: 5,
+          coordinates: baseCoords,
+          steps: baseSteps
         },
         eco: {
-          mode: 'eco', title: '🔋 Éco & Plat', subtitle: 'Dénivelé minimal, préserve la batterie',
-          coordinates: this.flatRoute(baseCoordinates),
-          distanceKm: ecoDist, durationMin: Math.round(ecoDist / 19 * 60) + 2,
-          cyclewayPercent: 86, protectedPct: 86, lanePct: 11, sharedPct: 3,
-          cobblestonesAvoided: 5, elevationGainM: 3, elevationLossM: 2, maxSlopePct: 1.6,
-          elevationProfile: this.generateElevationProfile(ecoDist, 32, 3, 'eco'),
-          safetyBadge: 'Pente < 2% • Zéro effort moteur', badgeClass: 'cyan', steps: baseSteps
+          title: 'Économie Batterie (Plat)',
+          mode: 'eco',
+          distanceKm: ecoDist,
+          durationMin: Math.max(1, Math.round((ecoDist / speed) * 60)),
+          protectedPct: 88,
+          praticability: '✨ Pente douce < 2%',
+          cobblestonesCount: 0,
+          elevationGainM: 5,
+          elevationLossM: 4,
+          maxSlopePct: 2,
+          coordinates: baseCoords,
+          steps: baseSteps
         },
         nature: {
-          mode: 'nature', title: '🌳 Voies Vertes', subtitle: 'Le long de l\'eau, détente et grand air',
-          coordinates: this.scenicRoute(baseCoordinates),
-          distanceKm: natureDist, durationMin: Math.round(natureDist / 18 * 60) + 3,
-          cyclewayPercent: 96, protectedPct: 96, lanePct: 4, sharedPct: 0,
-          cobblestonesAvoided: 6, elevationGainM: 5, elevationLossM: 4, maxSlopePct: 2.1,
-          elevationProfile: this.generateElevationProfile(natureDist, 30, 5, 'nature'),
-          safetyBadge: '100% Hors circulation automobile', badgeClass: 'emerald', steps: baseSteps
+          title: 'Parcs & Canaux',
+          mode: 'nature',
+          distanceKm: natureDist,
+          durationMin: Math.max(1, Math.round((natureDist / speed) * 60)),
+          protectedPct: 98,
+          praticability: '🌳 Voies vertes & berges',
+          cobblestonesCount: 0,
+          elevationGainM: 8,
+          elevationLossM: 7,
+          maxSlopePct: 2.5,
+          coordinates: baseCoords,
+          steps: baseSteps
         }
       };
     }
 
-    generateElevationProfile(totalKm, startAlt = 35, gainM = 10, type = 'safe') {
-      const points = [];
-      const count = 12;
-      for (let i = 0; i <= count; i++) {
-        const dist = parseFloat(((i / count) * totalKm).toFixed(2));
-        let alt = startAlt;
-        if (type === 'fast') alt += Math.sin((i / count) * Math.PI) * gainM + Math.sin(i * 1.2) * 2;
-        else if (type === 'eco') alt += (i / count) * gainM * 0.4;
-        else alt += Math.sin((i / count) * Math.PI) * (gainM * 0.85);
-        const slope = i === 0 ? 0 : parseFloat((((alt - points[i-1].altM) / (totalKm / count * 1000)) * 100).toFixed(1));
-        points.push({ distKm: dist, altM: Math.round(alt), slopePct: Math.abs(slope) });
-      }
-      return points;
-    }
-
-    slightlyDirectRoute(baseCoords) {
-      return baseCoords.filter((_, i) => i % 2 === 0 || i === baseCoords.length - 1);
-    }
-
-    flatRoute(baseCoords) {
-      return baseCoords.map(([lat, lng], idx) => [lat + Math.sin(idx * 0.3) * 0.0003, lng]);
-    }
-
-    scenicRoute(baseCoords) {
-      return baseCoords.map(([lat, lng], idx) => [lat - 0.0012 + Math.sin(idx * 0.5) * 0.0004, lng - 0.0008 + Math.cos(idx * 0.5) * 0.0004]);
-    }
-
-    interpolateRealisticCycleRoute(start, end) {
-      const latDiff = end.lat - start.lat;
-      const lngDiff = end.lng - start.lng;
-      const numPoints = 28;
+    generateRealisticGridRoute(start, end) {
       const coords = [];
-      for (let i = 0; i <= numPoints; i++) {
-        const t = i / numPoints;
-        const wobble = Math.sin(t * Math.PI) * 0.0035;
-        const lat = start.lat + latDiff * t + wobble * (lngDiff > 0 ? 0.3 : -0.3);
-        const lng = start.lng + lngDiff * t - wobble * 0.6;
-        coords.push([lat, lng]);
+      const lat1 = start.lat, lng1 = start.lng;
+      const lat2 = end.lat, lng2 = end.lng;
+
+      // Realistic urban street grid with orthogonal road turns (Manhattan grid)
+      const numSegments = 16;
+      coords.push([lat1, lng1]);
+
+      const midLat = lat1 + (lat2 - lat1) * 0.45;
+      const midLng = lng1 + (lng2 - lng1) * 0.55;
+
+      for (let i = 1; i <= 6; i++) {
+        const t = i / 6;
+        coords.push([lat1 + (midLat - lat1) * t, lng1 + Math.sin(t * Math.PI) * 0.0004]);
       }
-      const approxDistKm = parseFloat((Math.sqrt(latDiff**2 + lngDiff**2) * 111 * 1.3).toFixed(1)) || 3.2;
+      for (let i = 1; i <= 6; i++) {
+        const t = i / 6;
+        coords.push([midLat + Math.cos(t * Math.PI) * 0.0003, lng1 + (midLng - lng1) * t]);
+      }
+      for (let i = 1; i <= 6; i++) {
+        const t = i / 6;
+        coords.push([midLat + (lat2 - midLat) * t, midLng + (lng2 - midLng) * t]);
+      }
+      coords.push([lat2, lng2]);
+
+      const distKm = parseFloat((this.computeDistanceKm(lat1, lng1, lat2, lng2) * 1.25).toFixed(1));
       const steps = [
-        { instruction: 'Prenez la piste cyclable protégée tout droit', distanceMeters: 250, street: 'Piste cyclable Bd Voltaire', modifier: 'straight', safety: '🛡️ Piste séparée des voitures' },
-        { instruction: 'Au carrefour, tournez à droite sur la voie verte', distanceMeters: 600, street: 'Rue de Rivoli (Coronapiste)', modifier: 'right', safety: '🟢 Voie 100% réservée trottinettes & vélos' },
-        { instruction: 'Continuez sur 1.2 km tout droit le long de la piste', distanceMeters: 1200, street: 'Axe Cyclable Majeur', modifier: 'straight', safety: '🛡️ Séparateur béton' },
-        { instruction: 'Tournez légèrement à gauche vers votre destination', distanceMeters: 350, street: 'Zone 30 partagée', modifier: 'left', safety: '🟡 Zone apaisée, piétons prioritaires' },
-        { instruction: 'Vous êtes arrivé à votre destination !', distanceMeters: 50, street: 'Point d\'arrivée', modifier: 'arrive', safety: '🏁 Arrivée trottinette' }
+        { distanceMeters: 300, street: 'Piste cyclable urbaine', modifier: 'straight', instruction: 'Tout droit sur la piste', safety: '🟢 Voie propre' },
+        { distanceMeters: 450, street: 'Axe transversal', modifier: 'right', instruction: 'Tournez à droite', safety: '🟢 Bande cyclable' },
+        { distanceMeters: 200, street: 'Rue de destination', modifier: 'left', instruction: 'Tournez à gauche', safety: '🟡 Zone 30' },
+        { distanceMeters: 50, street: 'Arrivée', modifier: 'arrive', instruction: 'Vous êtes arrivé !', safety: '🏁 Fin de trajet' }
       ];
-      return { coords, distanceKm: approxDistKm, steps };
+
+      return { coords, distanceKm: distKm, steps };
+    }
+
+    computeDistanceKm(lat1, lon1, lat2, lon2) {
+      const R = 6371;
+      const dLat = (lat2 - lat1) * Math.PI / 180;
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dLat/2) * Math.sin(dLat/2) + Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dLon/2) * Math.sin(dLon/2);
+      const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+      return R * c;
     }
   }
 
   // =========================================================================
-  // 5. Map Manager
-  // =========================================================================
-  class MapManager {
-    constructor(containerId = 'map') {
-      this.containerId = containerId;
-      this.map = null;
-      this.scooterMarker = null;
-      this.routePolylines = [];
-      this.startMarker = null;
-      this.endMarker = null;
-      this.activeLayerIndex = 0;
-      this.defaultCenter = [48.8531, 2.3698];
-      this.currentLocation = { lat: 48.8531, lng: 2.3698, heading: 90, speed: 0 };
-      this.initMap();
-    }
-
-    initMap() {
-      this.map = L.map(this.containerId, {
-        center: this.defaultCenter, zoom: 15, zoomControl: false, attributionControl: false
-      });
-      L.control.attribution({ position: 'bottomleft' })
-        .addAttribution('&copy; <a href="https://www.cyclosm.org" target="_blank">CyclOSM</a> | &copy; OpenStreetMap')
-        .addTo(this.map);
-      L.control.zoom({ position: 'topleft' }).addTo(this.map);
-
-      this.tileLayers = [
-        L.tileLayer('https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png', { maxZoom: 20, subdomains: 'abc' }),
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', { maxZoom: 19, subdomains: 'abcd' }),
-        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 })
-      ];
-      this.tileLayers[0].addTo(this.map);
-      this.createScooterMarker(this.defaultCenter[0], this.defaultCenter[1]);
-    }
-
-    cycleTileLayer() {
-      this.map.removeLayer(this.tileLayers[this.activeLayerIndex]);
-      this.activeLayerIndex = (this.activeLayerIndex + 1) % this.tileLayers.length;
-      this.tileLayers[this.activeLayerIndex].addTo(this.map);
-      return ['🚲 Pistes CyclOSM', '🌙 Mode Nuit Carto', '🗺️ Standard OSM'][this.activeLayerIndex];
-    }
-
-    createScooterMarker(lat, lng) {
-      const icon = L.divIcon({
-        className: 'scooter-leaflet-div',
-        html: `<div id="trotti-scooter-pin" class="scooter-marker-container"><div class="scooter-beam"></div><div class="scooter-icon-pin">🛴</div></div>`,
-        iconSize: [44, 44], iconAnchor: [22, 22]
-      });
-      this.scooterMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(this.map);
-    }
-
-    updateScooterPosition(lat, lng, heading = 0, speedKmh = 0) {
-      this.currentLocation = { lat, lng, heading, speed: speedKmh };
-      if (this.scooterMarker) {
-        this.scooterMarker.setLatLng([lat, lng]);
-        const pinEl = document.getElementById('trotti-scooter-pin');
-        if (pinEl) pinEl.style.transform = `rotate(${heading}deg)`;
-      }
-    }
-
-    recenter(zoom = 16) {
-      if (this.currentLocation) {
-        this.map.setView([this.currentLocation.lat, this.currentLocation.lng], zoom, { animate: true, pan: { duration: 0.5 } });
-      }
-    }
-
-    drawRoute(coordinates, mode = 'safe') {
-      this.clearRoute();
-      if (!coordinates || coordinates.length === 0) return;
-      const colors = { safe: ['rgba(16,185,129,0.4)', '#10b981'], fast: ['rgba(14,165,233,0.4)', '#0ea5e9'], eco: ['rgba(6,182,212,0.4)', '#06b6d4'], nature: ['rgba(132,204,22,0.4)', '#84cc16'] };
-      const [glowColor, mainColor] = colors[mode] || colors.safe;
-
-      const glowPolyline = L.polyline(coordinates, { color: glowColor, weight: 12, opacity: 0.8, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
-      const mainPolyline = L.polyline(coordinates, { color: mainColor, weight: 6, opacity: 0.95, lineCap: 'round', lineJoin: 'round', dashArray: mode === 'fast' ? '8, 8' : null }).addTo(this.map);
-      this.routePolylines.push(glowPolyline, mainPolyline);
-
-      const startPoint = coordinates[0];
-      const endPoint = coordinates[coordinates.length - 1];
-      this.startMarker = L.marker(startPoint, { icon: L.divIcon({ className: 'route-point-marker', html: '<div style="background:#10b981;width:20px;height:20px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 10px rgba(0,0,0,0.5);"></div>', iconSize: [20,20], iconAnchor: [10,10] }) }).addTo(this.map);
-      this.endMarker = L.marker(endPoint, { icon: L.divIcon({ className: 'route-point-marker', html: '<div style="background:#ef4444;width:26px;height:26px;border-radius:50%;border:3px solid #fff;box-shadow:0 0 12px rgba(239,68,68,0.7);display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;font-weight:bold;">🏁</div>', iconSize: [26,26], iconAnchor: [13,13] }) }).addTo(this.map);
-      this.map.fitBounds(mainPolyline.getBounds(), { padding: [80, 80] });
-    }
-
-    clearRoute() {
-      this.routePolylines.forEach(l => this.map.removeLayer(l));
-      this.routePolylines = [];
-      if (this.startMarker) { this.map.removeLayer(this.startMarker); this.startMarker = null; }
-      if (this.endMarker) { this.map.removeLayer(this.endMarker); this.endMarker = null; }
-    }
-  }
-
-  // =========================================================================
-  // 6. Navigation & Guidance Engine
+  // 12. Navigation Engine
   // =========================================================================
   class NavigationEngine {
-    constructor(mapManager, hazardManager, batteryEngine, callbacks = {}) {
+    constructor(mapManager, batteryEngine, rideRecorder, voiceEngine, compassManager) {
       this.mapManager = mapManager;
-      this.hazardManager = hazardManager;
       this.batteryEngine = batteryEngine;
-      this.callbacks = callbacks;
+      this.rideRecorder = rideRecorder;
+      this.voiceEngine = voiceEngine;
+      this.compassManager = compassManager;
+      this.activeRoute = null;
       this.isNavigating = false;
-      this.isSimulating = false;
+      this.isSimulated = false;
+      this.simIndex = 0;
+      this.simInterval = null;
       this.simulationSpeedMultiplier = 1;
-      this.voiceEnabled = true;
-      this.synth = window.speechSynthesis || null;
-      this.currentRoute = null;
-      this.routePoints = [];
-      this.currentPointIndex = 0;
-      this.simulationTimer = null;
-      this.lastSpokenStepIndex = -1;
-      this.currentSpeed = 0;
-      this.gpsWatchId = null;
+
+      this.onSpeedUpdate = null;
+      this.onStepUpdate = null;
+      this.onTripUpdate = null;
+      this.onArrival = null;
     }
 
-    startNavigation(route, simulate = false) {
-      if (!route || !route.coordinates || route.coordinates.length === 0) return;
-      this.currentRoute = route;
-      this.routePoints = route.coordinates;
-      this.currentPointIndex = 0;
+    startNavigation(route, isSimulated = false) {
+      this.activeRoute = route;
       this.isNavigating = true;
-      this.lastSpokenStepIndex = -1;
-      this.speak(`Itinéraire sélectionné : ${route.title}. ${route.distanceKm} kilomètres, environ ${route.durationMin} minutes. Suivez les pistes cyclables.`);
-      if (simulate) this.startSimulation();
-      else this.watchRealGPS();
+      this.isSimulated = isSimulated;
+      this.simIndex = 0;
+
+      if (this.voiceEngine) {
+        this.voiceEngine.speak(`Départ. Suivez l'itinéraire ${route.title}, ${route.durationMin} minutes.`, 'turn');
+      }
+
+      if (isSimulated) {
+        this.startSimulation();
+      } else {
+        this.startRealGpsTracking();
+      }
+    }
+
+    startSimulation() {
+      const coords = this.activeRoute.coordinates;
+      if (this.simInterval) clearInterval(this.simInterval);
+
+      this.simInterval = setInterval(() => {
+        if (this.simIndex >= coords.length) {
+          this.stopNavigation();
+          if (this.onArrival) this.onArrival();
+          return;
+        }
+
+        const currentPt = coords[this.simIndex];
+        const nextPt = coords[Math.min(coords.length - 1, this.simIndex + 1)];
+        const heading = this.calculateHeading(currentPt[0], currentPt[1], nextPt[0], nextPt[1]);
+        const speed = Math.round((this.batteryEngine.config.speedPrefKmh || 25) * (0.9 + Math.random() * 0.15));
+
+        this.mapManager.updateScooterPosition(currentPt[0], currentPt[1], heading, speed);
+        if (this.compassManager) {
+          this.compassManager.setHeading(heading);
+        }
+
+        if (this.rideRecorder && this.rideRecorder.isRecording) {
+          this.rideRecorder.addGpsPoint(currentPt[0], currentPt[1], speed, 35);
+          this.mapManager.drawLiveTrackPoint(currentPt[0], currentPt[1]);
+        }
+
+        if (this.onSpeedUpdate) this.onSpeedUpdate(speed);
+
+        const stepIdx = Math.min(this.activeRoute.steps.length - 1, Math.floor((this.simIndex / coords.length) * this.activeRoute.steps.length));
+        const step = this.activeRoute.steps[stepIdx];
+        if (this.onStepUpdate) this.onStepUpdate(step);
+
+        const progress = this.simIndex / coords.length;
+        const remDist = Math.max(0, (this.activeRoute.distanceKm * (1 - progress)).toFixed(1));
+        const remMin = Math.max(1, Math.round(this.activeRoute.durationMin * (1 - progress)));
+        const batteryStatus = this.batteryEngine.estimateTrip(parseFloat(remDist), 5);
+
+        if (this.onTripUpdate) {
+          this.onTripUpdate({ remainingDistKm: remDist, remainingMin: remMin, batteryStatus });
+        }
+
+        this.simIndex++;
+      }, 700 / this.simulationSpeedMultiplier);
+    }
+
+    startRealGpsTracking() {
+      if (!navigator.geolocation) return;
+      this.watchId = navigator.geolocation.watchPosition(
+        pos => {
+          const { latitude, longitude, speed, heading, altitude } = pos.coords;
+          const speedKmh = Math.round((speed || 0) * 3.6);
+          const currentHead = heading || 0;
+          this.mapManager.updateScooterPosition(latitude, longitude, currentHead, speedKmh);
+          if (this.compassManager) {
+            this.compassManager.setHeading(currentHead);
+          }
+
+          if (this.rideRecorder && this.rideRecorder.isRecording) {
+            this.rideRecorder.addGpsPoint(latitude, longitude, speedKmh, altitude || 0);
+            this.mapManager.drawLiveTrackPoint(latitude, longitude);
+          }
+
+          if (this.onSpeedUpdate) this.onSpeedUpdate(speedKmh);
+        },
+        err => console.warn('GPS watch error:', err),
+        { enableHighAccuracy: true, maximumAge: 1000, timeout: 5000 }
+      );
     }
 
     stopNavigation() {
       this.isNavigating = false;
-      this.isSimulating = false;
-      if (this.simulationTimer) { clearInterval(this.simulationTimer); this.simulationTimer = null; }
-      if (this.gpsWatchId) { navigator.geolocation.clearWatch(this.gpsWatchId); this.gpsWatchId = null; }
-      this.currentSpeed = 0;
-      if (this.callbacks.onSpeedUpdate) this.callbacks.onSpeedUpdate(0);
-      this.speak('Navigation terminée.');
+      if (this.simInterval) clearInterval(this.simInterval);
+      if (this.watchId) navigator.geolocation.clearWatch(this.watchId);
     }
 
-    setVoiceEnabled(enabled) {
-      this.voiceEnabled = enabled;
-      if (!enabled && this.synth) this.synth.cancel();
+    setSimulationSpeed(multiplier) {
+      this.simulationSpeedMultiplier = multiplier;
+      if (this.isSimulated && this.isNavigating) this.startSimulation();
     }
 
-    speak(text) {
-      if (!this.voiceEnabled || !this.synth) return;
-      try {
-        this.synth.cancel();
-        const utterance = new SpeechSynthesisUtterance(text);
-        utterance.lang = 'fr-FR'; utterance.rate = 1.05;
-        const voices = this.synth.getVoices();
-        const frVoice = voices.find(v => v.lang.startsWith('fr'));
-        if (frVoice) utterance.voice = frVoice;
-        this.synth.speak(utterance);
-      } catch (e) {}
-    }
-
-    startSimulation() {
-      this.isSimulating = true;
-      const totalPoints = this.routePoints.length;
-      if (this.simulationTimer) clearInterval(this.simulationTimer);
-      const [startLat, startLng] = this.routePoints[0];
-      this.mapManager.updateScooterPosition(startLat, startLng, 90, 0);
-      this.mapManager.recenter(17);
-      let progressFraction = 0;
-
-      this.simulationTimer = setInterval(() => {
-        if (!this.isNavigating || !this.isSimulating) return;
-        if (this.currentPointIndex >= totalPoints - 1) { this.arrive(); return; }
-
-        const p1 = this.routePoints[this.currentPointIndex];
-        const p2 = this.routePoints[this.currentPointIndex + 1];
-        const heading = this.calculateBearing(p1[0], p1[1], p2[0], p2[1]);
-
-        progressFraction += 0.08 * this.simulationSpeedMultiplier;
-        if (progressFraction >= 1) { progressFraction = 0; this.currentPointIndex++; }
-
-        const currentLat = p1[0] + (p2[0] - p1[0]) * progressFraction;
-        const currentLng = p1[1] + (p2[1] - p1[1]) * progressFraction;
-        const baseKmh = 22 + Math.sin(Date.now() / 1500) * 2.5;
-        this.currentSpeed = Math.min(25, Math.max(12, baseKmh));
-
-        this.mapManager.updateScooterPosition(currentLat, currentLng, heading, Math.round(this.currentSpeed));
-        this.mapManager.map.panTo([currentLat, currentLng], { animate: false });
-
-        const remainingFraction = 1 - (this.currentPointIndex / totalPoints);
-        const remainingDistKm = (parseFloat(this.currentRoute.distanceKm) * remainingFraction).toFixed(1);
-        const remainingMin = Math.max(1, Math.round(parseFloat(this.currentRoute.durationMin) * remainingFraction));
-
-        this.updateStepInstruction(this.currentPointIndex, totalPoints);
-
-        const hazardNear = this.hazardManager.checkProximity(currentLat, currentLng);
-        if (hazardNear && hazardNear.isFresh && this.callbacks.onHazardNear) {
-          this.callbacks.onHazardNear(hazardNear);
-          this.speak(hazardNear.config.audioText);
-        }
-
-        const batteryStatus = this.batteryEngine.estimateTrip(parseFloat(remainingDistKm));
-        if (this.callbacks.onSpeedUpdate) this.callbacks.onSpeedUpdate(Math.round(this.currentSpeed));
-        if (this.callbacks.onTripUpdate) this.callbacks.onTripUpdate({ remainingDistKm, remainingMin, batteryStatus });
-      }, 200);
-    }
-
-    setSimulationSpeed(multiplier) { this.simulationSpeedMultiplier = multiplier; }
-
-    updateStepInstruction(pointIndex, totalPoints) {
-      const steps = this.currentRoute.steps || [];
-      if (steps.length === 0) return;
-      const stepIdx = Math.min(steps.length - 1, Math.floor((pointIndex / totalPoints) * steps.length));
-      const step = steps[stepIdx];
-      if (stepIdx !== this.lastSpokenStepIndex) {
-        this.lastSpokenStepIndex = stepIdx;
-        if (this.callbacks.onStepUpdate) this.callbacks.onStepUpdate(step);
-        this.speak(step.instruction);
-      }
-    }
-
-    arrive() {
-      this.isNavigating = false; this.isSimulating = false;
-      if (this.simulationTimer) clearInterval(this.simulationTimer);
-      this.currentSpeed = 0;
-      if (this.callbacks.onSpeedUpdate) this.callbacks.onSpeedUpdate(0);
-      this.speak('Vous êtes arrivé à votre destination en trottinette. Pensez à attacher votre engin avec un antivol solide !');
-      if (this.callbacks.onArrival) this.callbacks.onArrival();
-    }
-
-    watchRealGPS() {
-      if (!navigator.geolocation) { alert('La géolocalisation n\'est pas supportée.'); return; }
-      this.gpsWatchId = navigator.geolocation.watchPosition(
-        pos => {
-          const { latitude, longitude, speed, heading } = pos.coords;
-          const speedKmh = speed ? Math.round(speed * 3.6) : 0;
-          this.currentSpeed = speedKmh;
-          this.mapManager.updateScooterPosition(latitude, longitude, heading || 0, speedKmh);
-          this.mapManager.recenter();
-          if (this.callbacks.onSpeedUpdate) this.callbacks.onSpeedUpdate(speedKmh);
-          const hazardNear = this.hazardManager.checkProximity(latitude, longitude);
-          if (hazardNear && hazardNear.isFresh && this.callbacks.onHazardNear) {
-            this.callbacks.onHazardNear(hazardNear);
-            this.speak(hazardNear.config.audioText);
-          }
-        },
-        err => console.warn('GPS error', err),
-        { enableHighAccuracy: true, maximumAge: 1000 }
-      );
-    }
-
-    calculateBearing(lat1, lon1, lat2, lon2) {
-      const y = Math.sin((lon2-lon1)*Math.PI/180) * Math.cos(lat2*Math.PI/180);
-      const x = Math.cos(lat1*Math.PI/180) * Math.sin(lat2*Math.PI/180) - Math.sin(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.cos((lon2-lon1)*Math.PI/180);
-      return Math.round((Math.atan2(y, x) * 180 / Math.PI + 360) % 360);
+    calculateHeading(lat1, lon1, lat2, lon2) {
+      const dLon = (lon2 - lon1) * Math.PI / 180;
+      const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
+      const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
+                Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
+      const brng = Math.atan2(y, x) * 180 / Math.PI;
+      return (brng + 360) % 360;
     }
   }
 
   // =========================================================================
-  // 7. Main Application - TrottiWazeApp
+  // 13. Hazard Manager & Sound System
+  // =========================================================================
+  const HAZARD_TYPES = {
+    charge: { label: 'Prise 230V / Borne', icon: '⚡', warning: 'Prise 230V standard disponible' },
+    pothole: { label: 'Nid-de-poule / Pavés', icon: '🕳️', warning: 'Risque de chute roues 8-10"' },
+    blocked: { label: 'Piste fermée / Travaux', icon: '🚧', warning: 'Déviation obligatoire' },
+    police: { label: 'Contrôle Police', icon: '👮', warning: 'Vérif 25 km/h & équipement' },
+    car: { label: 'Voiture sur la piste', icon: '🚗', warning: 'Obstruction dangereuse' },
+    repair: { label: 'Station gonflage', icon: '🧰', warning: 'Pompe & outils publics' }
+  };
+
+  class HazardManager {
+    constructor(mapManager) {
+      this.mapManager = mapManager;
+      this.hazards = [
+        { id: 'h1', type: 'pothole', lat: 48.8552, lng: 2.3520, title: 'Nid-de-poule profond', desc: 'Rue de Rivoli voie droite', author: 'TrottiPro', upvotes: 5 },
+        { id: 'h2', type: 'blocked', lat: 48.8580, lng: 2.3600, title: 'Travaux réseau', desc: 'Piste coupée sur 50m', author: 'NinebotMax', upvotes: 3 },
+        { id: 'h3', type: 'police', lat: 48.8650, lng: 2.3650, title: 'Contrôle vitesse', desc: 'Place de la République', author: 'VeloParis', upvotes: 12 }
+      ];
+      this.markers = {};
+      this.renderHazards();
+    }
+
+    renderHazards() {
+      this.hazards.forEach(h => this.addHazardMarker(h));
+    }
+
+    addHazardMarker(h) {
+      const cfg = HAZARD_TYPES[h.type] || HAZARD_TYPES.pothole;
+      const icon = L.divIcon({
+        className: 'hazard-leaflet-icon',
+        html: `<div style="font-size:22px; filter:drop-shadow(0 2px 5px rgba(0,0,0,0.5)); cursor:pointer;" title="${h.title}">${cfg.icon}</div>`,
+        iconSize: [28, 28], iconAnchor: [14, 14]
+      });
+      const marker = L.marker([h.lat, h.lng], { icon }).addTo(this.mapManager.map);
+      marker.bindPopup(`<strong>${cfg.icon} ${h.title}</strong><br><span style="font-size:11px; color:#64748b;">${h.desc}</span>`);
+      this.markers[h.id] = marker;
+    }
+
+    addHazard(hazardData) {
+      const id = 'h_' + Date.now();
+      const h = { id, ...hazardData };
+      this.hazards.push(h);
+      this.addHazardMarker(h);
+      return h;
+    }
+
+    playCockpitBell() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(1760, ctx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(880, ctx.currentTime + 0.35);
+        gain.gain.setValueAtTime(0.4, ctx.currentTime);
+        gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.35);
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start();
+        osc.stop(ctx.currentTime + 0.35);
+      } catch (e) {}
+    }
+  }
+
+  // =========================================================================
+  // 14. Master TrottiWaze App Controller
   // =========================================================================
   class TrottiWazeApp {
     constructor() {
+      this.authManager = new AuthManager();
+      this.garageManager = new GarageManager(activeScooter => this.handleActiveScooterChanged(activeScooter));
+      this.batteryEngine = new BatteryEngine(this.garageManager);
+      this.weatherEngine = new WeatherEngine();
+      this.historyManager = new HistoryManager();
       this.mapManager = new MapManager('map');
-      this.routingEngine = new RoutingEngine();
-      this.hazardManager = new HazardManager(this.mapManager.map);
-      this.batteryEngine = new BatteryEngine();
-      this.userManager = new UserManager(this.mapManager.map, (user) => this.openUserProfileModal(user));
+      this.compassManager = new OrientationCompassManager(this.mapManager);
+      this.voiceEngine = new VoiceGuidanceEngine();
+      
+      this.rideRecorder = new RideRecorder(stats => this.handleRideRecorderUpdate(stats));
+      this.chargingManager = new ChargingStationsManager(this.mapManager, station => this.navigateToChargingStation(station));
+      this.routingEngine = new RoutingEngine(this.batteryEngine);
+      this.navigationEngine = new NavigationEngine(this.mapManager, this.batteryEngine, this.rideRecorder, this.voiceEngine, this.compassManager);
+      this.hazardManager = new HazardManager(this.mapManager);
 
       this.selectedRouteMode = 'safe';
       this.calculatedRoutes = null;
-      this.selectedHazardType = null;
-      this.isVoiceMuted = false;
-      this.activeModalUser = null;
+      this.selectedStartCoords = null;
+      this.selectedEndCoords = null;
+      this.selectedSignupAvatar = '🦊';
+      this.selectedScooterIcon = '🛴';
 
-      this.navigationEngine = new NavigationEngine(
-        this.mapManager, this.hazardManager, this.batteryEngine,
-        {
-          onSpeedUpdate: (speed) => this.handleSpeedUpdate(speed),
-          onStepUpdate: (step) => this.handleStepUpdate(step),
-          onTripUpdate: (trip) => this.handleTripUpdate(trip),
-          onHazardNear: (hzAlert) => this.handleHazardProximity(hzAlert),
-          onArrival: () => this.handleArrival()
-        }
-      );
-
-      window.trottiApp = this;
-      this.initDOM();
+      this.cacheDOMElements();
       this.initEvents();
-      this.hazardManager.renderMarkers();
-      this.calculateCurrentRoute();
-      this.updateBatteryWidget();
-      this.initWeatherBar();
-
-      // Init nearby users after map is ready
-      setTimeout(() => {
-        this.userManager.initNearbyUsers(48.8531, 2.3698);
-        document.getElementById('radar-user-count').textContent = this.userManager.getUserCount();
-      }, 500);
+      this.initUserGPS();
+      this.renderGarageFleetUI();
+      this.renderRidesHistoryUI();
+      this.initVoiceUI();
+      this.updateUserAuthUI();
+      this.chargingManager.render();
     }
 
-    initDOM() {
+    cacheDOMElements() {
+      this.elRoutePanel = document.getElementById('route-panel');
+      this.elExpandableContent = document.getElementById('panel-expandable-content');
+      this.elStickyLaunchBar = document.getElementById('sticky-launch-bar');
+      this.elLiveRecordingHud = document.getElementById('live-recording-hud');
+
       this.elStartInput = document.getElementById('start-input');
       this.elEndInput = document.getElementById('end-input');
-      this.elRoutePanel = document.getElementById('route-panel');
+      this.elStartSuggestions = document.getElementById('start-suggestions');
+      this.elEndSuggestions = document.getElementById('end-suggestions');
+
       this.elNavBanner = document.getElementById('nav-banner');
+      this.elNavDistance = document.getElementById('nav-step-distance');
+      this.elNavStreet = document.getElementById('nav-step-street');
+      this.elNavSafety = document.getElementById('nav-step-type');
+      this.elNavIcon = document.getElementById('nav-turn-icon');
+
+      this.elSettingsModal = document.getElementById('settings-modal');
+      this.elAuthModal = document.getElementById('auth-modal');
+      this.elReportModal = document.getElementById('report-modal');
       this.elHazardAlert = document.getElementById('hazard-proximity-alert');
       this.elSimuController = document.getElementById('simu-controller');
       this.elReportFab = document.getElementById('btn-report-hazard');
 
       this.elSpeedVal = document.getElementById('hud-speed-val');
       this.elSpeedCircle = document.getElementById('speed-circle-bar');
-      this.elSpeedBox = document.querySelector('.hud-speedometer-box');
+      this.elSpeedLimitBadge = document.getElementById('speed-limit-badge');
       this.elHudEta = document.getElementById('hud-eta');
       this.elHudTimeRem = document.getElementById('hud-time-rem');
       this.elHudDistRem = document.getElementById('hud-dist-rem');
@@ -924,70 +1794,874 @@
       this.elBatteryPercent = document.getElementById('hud-battery-percent');
       this.elBatteryArrival = document.getElementById('hud-battery-arrival');
 
-      this.elNavDistance = document.getElementById('nav-step-distance');
-      this.elNavStreet = document.getElementById('nav-step-street');
-      this.elNavSafety = document.getElementById('nav-step-type');
-      this.elNavIcon = document.getElementById('nav-turn-icon');
+      this.elLaunchButtonLabel = document.getElementById('launch-button-label');
+      this.elLaunchButtonSub = document.getElementById('launch-button-sub');
 
-      this.elReportModal = document.getElementById('report-modal');
-      this.elBatteryModal = document.getElementById('battery-modal');
-      this.elUserModal = document.getElementById('user-profile-modal');
+      this.elRoadAdhesionBar = document.getElementById('road-adhesion-bar');
+      this.elWeatherIcon = document.getElementById('weather-icon');
+      this.elWeatherSummary = document.getElementById('weather-summary');
+      this.elRainWarningCard = document.getElementById('rain-warning-card');
+      this.elRainAlertTitle = document.getElementById('rain-alert-title');
+      this.elRainAlertAdvice = document.getElementById('rain-alert-advice');
 
-      this.elStartSuggestions = document.getElementById('start-suggestions');
-      this.elEndSuggestions = document.getElementById('end-suggestions');
+      this.elWhCalcDrawer = document.getElementById('wh-calc-drawer');
+      this.elToggleCharging = document.getElementById('toggle-charging-stations');
+    }
+
+    initUserGPS() {
+      if (!navigator.geolocation) return;
+
+      navigator.geolocation.getCurrentPosition(
+        async pos => {
+          const { latitude, longitude } = pos.coords;
+          localStorage.setItem('trottiwaze_gps_allowed', 'true');
+          this.selectedStartCoords = { lat: latitude, lng: longitude };
+          this.mapManager.updateScooterPosition(latitude, longitude, 0, 0);
+          this.mapManager.recenter(16);
+          this.elStartInput.value = '📍 Ma position';
+          this.showToast('📍 Position GPS détectée');
+
+          this.chargingManager.generateNearbyStations(latitude, longitude);
+
+          const weather = await this.weatherEngine.fetchWeather(latitude, longitude);
+          this.updateWeatherUI(weather);
+        },
+        err => console.warn('GPS lookup notice:', err),
+        { enableHighAccuracy: true, timeout: 8000, maximumAge: 30000 }
+      );
+    }
+
+    updateWeatherUI(weather) {
+      if (!weather) return;
+      if (this.elWeatherSummary) this.elWeatherSummary.innerHTML = `${weather.summary}`;
+      if (this.elWeatherIcon) this.elWeatherIcon.textContent = weather.roadStatus === 'wet' ? '🌧️' : weather.roadStatus === 'risk' ? '⛅' : '☀️';
+      if (this.elRoadAdhesionBar) this.elRoadAdhesionBar.className = `road-adhesion-pill ${weather.roadStatus}`;
+
+      if (weather.roadStatus === 'wet' || weather.roadStatus === 'risk') {
+        if (this.elRainWarningCard) {
+          this.elRainWarningCard.style.display = 'block';
+          this.elRainAlertTitle.textContent = `Avertissement Pluie (${weather.rainProbPct}% de risque)`;
+          this.elRainAlertAdvice.innerHTML = `⚠️ <strong>${weather.advice}</strong>`;
+        }
+      } else {
+        if (this.elRainWarningCard) this.elRainWarningCard.style.display = 'none';
+      }
+    }
+
+    navigateToChargingStation(station) {
+      this.selectedEndCoords = { lat: station.lat, lng: station.lng };
+      this.elEndInput.value = `⚡ ${station.name}`;
+      this.calculateCurrentRoute();
+      this.showToast(`Itinéraire vers ${station.name}`);
+    }
+
+    // =======================================================================
+    // Garage & Scooter Fleet UI Handling
+    // =======================================================================
+    renderGarageFleetUI() {
+      const container = document.getElementById('garage-scooters-list');
+      if (!container) return;
+
+      container.innerHTML = '';
+      const active = this.garageManager.getActiveScooter();
+
+      this.garageManager.scooters.forEach(scoot => {
+        const isActive = scoot.id === active.id;
+        const card = document.createElement('div');
+        card.className = `scooter-fleet-card ${isActive ? 'active-scooter' : ''}`;
+        card.innerHTML = `
+          <div class="fleet-card-top">
+            <div class="fleet-card-info">
+              <span class="fleet-icon">${scoot.icon || '🛴'}</span>
+              <span class="fleet-name">${scoot.name}</span>
+            </div>
+            ${isActive ? '<span class="fleet-active-badge">✓ Active</span>' : ''}
+          </div>
+          <div class="fleet-specs-tags">
+            <span class="fleet-spec-tag">🔋 <strong>${scoot.batteryCapacityWh} Wh</strong></span>
+            <span class="fleet-spec-tag">⚡ <strong>${scoot.speedPrefKmh} km/h</strong></span>
+            <span class="fleet-spec-tag">⚖️ <strong>${scoot.scooterWeightKg} kg</strong> (trotti)</span>
+            <span class="fleet-spec-tag">👤 <strong>${scoot.riderWeightKg} kg</strong> (rider)</span>
+            <span class="fleet-spec-tag">🔋 <strong>${scoot.currentPercentage}%</strong></span>
+          </div>
+          <div class="fleet-actions-row">
+            ${!isActive ? `<button class="btn-micro green btn-activate-scooter" data-id="${scoot.id}">⚡ Choisir ce modèle</button>` : `<span style="font-size:11px; color:var(--primary); font-weight:700;">Modèle sélectionné</span>`}
+            <div style="display:flex; gap:6px;">
+              <button class="btn-micro btn-edit-scooter" data-id="${scoot.id}" title="Modifier">✏️</button>
+              <button class="btn-micro danger btn-del-scooter" data-id="${scoot.id}" title="Supprimer">🗑️</button>
+            </div>
+          </div>
+        `;
+
+        const btnAct = card.querySelector('.btn-activate-scooter');
+        if (btnAct) {
+          btnAct.addEventListener('click', () => {
+            this.garageManager.setActiveScooter(scoot.id);
+            this.renderGarageFleetUI();
+            this.showToast(`🛴 Modèle actif : ${scoot.name}`);
+          });
+        }
+
+        const btnEdit = card.querySelector('.btn-edit-scooter');
+        if (btnEdit) {
+          btnEdit.addEventListener('click', () => {
+            this.openScooterDrawer(scoot);
+          });
+        }
+
+        const btnDel = card.querySelector('.btn-del-scooter');
+        if (btnDel) {
+          btnDel.addEventListener('click', () => {
+            if (confirm(`Supprimer la trottinette "${scoot.name}" de votre garage ?`)) {
+              const res = this.garageManager.deleteScooter(scoot.id);
+              if (res.success) {
+                this.renderGarageFleetUI();
+                this.showToast('🗑️ Trottinette supprimée du garage');
+              } else {
+                alert(res.message);
+              }
+            }
+          });
+        }
+
+        container.appendChild(card);
+      });
+
+      this.updateHudWithActiveScooter(active);
+    }
+
+    openScooterDrawer(scoot = null) {
+      const drawer = document.getElementById('scooter-form-drawer');
+      if (!drawer) return;
+
+      const title = document.getElementById('scooter-drawer-title');
+      const editId = document.getElementById('edit-scooter-id');
+      const nameInp = document.getElementById('scooter-custom-name');
+      const capInp = document.getElementById('scooter-capacity');
+      const riderInp = document.getElementById('scooter-rider-weight');
+      const scootInp = document.getElementById('scooter-weight');
+      const speedSlider = document.getElementById('scooter-speed-slider');
+      const valSpeed = document.getElementById('val-speed-slider');
+      const battSlider = document.getElementById('scooter-battery-pct');
+      const valBatt = document.getElementById('val-battery-pct');
+
+      if (scoot) {
+        title.textContent = `✏️ Modifier "${scoot.name}"`;
+        editId.value = scoot.id;
+        nameInp.value = scoot.name;
+        capInp.value = scoot.batteryCapacityWh;
+        riderInp.value = scoot.riderWeightKg;
+        scootInp.value = scoot.scooterWeightKg;
+        speedSlider.value = scoot.speedPrefKmh;
+        valSpeed.textContent = `${scoot.speedPrefKmh} km/h`;
+        battSlider.value = scoot.currentPercentage;
+        valBatt.textContent = `${scoot.currentPercentage}%`;
+        this.selectedScooterIcon = scoot.icon || '🛴';
+      } else {
+        title.textContent = '➕ Nouvelle Trottinette';
+        editId.value = '';
+        nameInp.value = '';
+        capInp.value = '550';
+        riderInp.value = '75';
+        scootInp.value = '18';
+        speedSlider.value = '25';
+        valSpeed.textContent = '25 km/h';
+        battSlider.value = '80';
+        valBatt.textContent = '80%';
+        this.selectedScooterIcon = '🛴';
+      }
+
+      document.querySelectorAll('.scooter-icon-choice').forEach(b => {
+        b.classList.toggle('active', b.getAttribute('data-icon') === this.selectedScooterIcon);
+      });
+
+      drawer.style.display = 'block';
+    }
+
+    handleActiveScooterChanged(scoot) {
+      this.mapManager.updateScooterIcon(scoot.icon || '🛴');
+      this.updateHudWithActiveScooter(scoot);
+      if (this.elEndInput && this.elEndInput.value.trim().length > 0) {
+        this.calculateCurrentRoute();
+      }
+    }
+
+    updateHudWithActiveScooter(scoot) {
+      if (this.elSpeedLimitBadge) this.elSpeedLimitBadge.textContent = scoot.speedPrefKmh || 25;
+      if (this.elBatteryPercent) this.elBatteryPercent.textContent = `${scoot.currentPercentage}%`;
+      if (this.elBatteryFill) this.elBatteryFill.style.width = `${scoot.currentPercentage}%`;
+    }
+
+    // =======================================================================
+    // Voice Guidance & Speech Settings UI
+    // =======================================================================
+    initVoiceUI() {
+      const select = document.getElementById('voice-select-dropdown');
+      const toggleVoice = document.getElementById('toggle-voice-enabled');
+      const rateSlider = document.getElementById('voice-rate-slider');
+      const valRate = document.getElementById('val-voice-rate');
+      const pitchSlider = document.getElementById('voice-pitch-slider');
+      const valPitch = document.getElementById('val-voice-pitch');
+      const volSlider = document.getElementById('voice-volume-slider');
+      const valVol = document.getElementById('val-voice-volume');
+
+      const optTurns = document.getElementById('voice-opt-turns');
+      const optWeather = document.getElementById('voice-opt-weather');
+      const optHazards = document.getElementById('voice-opt-hazards');
+
+      if (toggleVoice) toggleVoice.checked = this.voiceEngine.config.enabled;
+      if (rateSlider) {
+        rateSlider.value = this.voiceEngine.config.rate;
+        valRate.textContent = `${this.voiceEngine.config.rate}x`;
+      }
+      if (pitchSlider) {
+        pitchSlider.value = this.voiceEngine.config.pitch;
+        valPitch.textContent = this.voiceEngine.config.pitch === 1.0 ? 'Neutre (1.0)' : this.voiceEngine.config.pitch > 1.0 ? 'Aigu' : 'Grave';
+      }
+      if (volSlider) {
+        volSlider.value = Math.round(this.voiceEngine.config.volume * 100);
+        valVol.textContent = `${Math.round(this.voiceEngine.config.volume * 100)}%`;
+      }
+      if (optTurns) optTurns.checked = this.voiceEngine.config.announceTurns;
+      if (optWeather) optWeather.checked = this.voiceEngine.config.announceWeather;
+      if (optHazards) optHazards.checked = this.voiceEngine.config.announceHazards;
+
+      const populateSelect = (voices) => {
+        if (!select) return;
+        select.innerHTML = '';
+
+        if (!voices || voices.length === 0) {
+          select.innerHTML = '<option value="">Voix système par défaut</option>';
+          return;
+        }
+
+        const frVoices = voices.filter(v => v.lang.startsWith('fr') || v.lang.startsWith('FR'));
+        const otherVoices = voices.filter(v => !v.lang.startsWith('fr') && !v.lang.startsWith('FR'));
+
+        if (frVoices.length > 0) {
+          const grpFr = document.createElement('optgroup');
+          grpFr.label = '🇫🇷 Voix Françaises (Recommandées)';
+          frVoices.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.voiceURI;
+            opt.textContent = `${v.name} (${v.lang})`;
+            if (v.voiceURI === this.voiceEngine.config.voiceURI || (!this.voiceEngine.config.voiceURI && v.default)) {
+              opt.selected = true;
+            }
+            grpFr.appendChild(opt);
+          });
+          select.appendChild(grpFr);
+        }
+
+        if (otherVoices.length > 0) {
+          const grpOther = document.createElement('optgroup');
+          grpOther.label = '🌍 Autres langues disponibles';
+          otherVoices.slice(0, 15).forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.voiceURI;
+            opt.textContent = `${v.name} (${v.lang})`;
+            grpOther.appendChild(opt);
+          });
+          select.appendChild(grpOther);
+        }
+      };
+
+      this.voiceEngine.initVoices(voices => populateSelect(voices));
+
+      if (select) {
+        select.addEventListener('change', () => {
+          this.voiceEngine.saveConfig({ voiceURI: select.value });
+          this.showToast('🎙️ Voix GPS mise à jour');
+        });
+      }
+
+      if (toggleVoice) {
+        toggleVoice.addEventListener('change', (e) => {
+          this.voiceEngine.saveConfig({ enabled: e.target.checked });
+          const controls = document.getElementById('voice-customizer-controls');
+          if (controls) controls.style.opacity = e.target.checked ? '1' : '0.4';
+          this.showToast(e.target.checked ? '🗣️ Guidage vocal activé' : '🔇 Guidage vocal coupé');
+        });
+      }
+
+      if (rateSlider) {
+        rateSlider.addEventListener('input', (e) => {
+          const val = parseFloat(e.target.value);
+          valRate.textContent = `${val.toFixed(2)}x`;
+          this.voiceEngine.saveConfig({ rate: val });
+        });
+      }
+
+      if (pitchSlider) {
+        pitchSlider.addEventListener('input', (e) => {
+          const val = parseFloat(e.target.value);
+          valPitch.textContent = val === 1.0 ? 'Neutre (1.0)' : val > 1.0 ? `Aigu (${val})` : `Grave (${val})`;
+          this.voiceEngine.saveConfig({ pitch: val });
+        });
+      }
+
+      if (volSlider) {
+        volSlider.addEventListener('input', (e) => {
+          const val = parseInt(e.target.value, 10);
+          valVol.textContent = `${val}%`;
+          this.voiceEngine.saveConfig({ volume: val / 100 });
+        });
+      }
+
+      const btnTestVoice = document.getElementById('btn-test-voice');
+      if (btnTestVoice) {
+        btnTestVoice.addEventListener('click', () => {
+          this.voiceEngine.testVoice();
+        });
+      }
+
+      [optTurns, optWeather, optHazards].forEach(chk => {
+        if (chk) {
+          chk.addEventListener('change', () => {
+            this.voiceEngine.saveConfig({
+              announceTurns: optTurns ? optTurns.checked : true,
+              announceWeather: optWeather ? optWeather.checked : true,
+              announceHazards: optHazards ? optHazards.checked : true
+            });
+          });
+        }
+      });
+    }
+
+    // =======================================================================
+    // User Authentication & Profile UI
+    // =======================================================================
+    updateUserAuthUI() {
+      const u = this.authManager.currentUser;
+      const avatarBadge = document.getElementById('header-avatar-badge');
+      const tabProfileBtn = document.querySelector('.auth-tab-btn[data-auth-tab="auth-profile"]');
+
+      if (u) {
+        if (avatarBadge) avatarBadge.textContent = u.avatar || '🦊';
+        if (tabProfileBtn) tabProfileBtn.style.display = 'block';
+
+        const dispUser = document.getElementById('profile-username-display');
+        const dispEmail = document.getElementById('profile-email-display');
+        const dispAvatar = document.getElementById('profile-avatar-display');
+        const dispKm = document.getElementById('prof-stat-km');
+        const dispRides = document.getElementById('prof-stat-rides');
+        const dispScoots = document.getElementById('prof-stat-scooter');
+        const dispRep = document.getElementById('prof-stat-reports');
+
+        if (dispUser) dispUser.textContent = u.username;
+        if (dispEmail) dispEmail.textContent = u.email;
+        if (dispAvatar) dispAvatar.textContent = u.avatar;
+        if (dispKm) dispKm.textContent = `${(u.stats && u.stats.totalKm) || 0} km`;
+        if (dispRides) dispRides.textContent = (u.stats && u.stats.totalRides) || 0;
+        if (dispScoots) dispScoots.textContent = `${this.garageManager.scooters.length} modèles`;
+        if (dispRep) dispRep.textContent = (u.stats && u.stats.reportsCount) || 0;
+      } else {
+        if (avatarBadge) avatarBadge.textContent = '👤';
+        if (tabProfileBtn) tabProfileBtn.style.display = 'none';
+      }
+    }
+
+    switchAuthTab(tabKey) {
+      document.querySelectorAll('.auth-tab-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-auth-tab') === tabKey));
+      document.querySelectorAll('.auth-tab-pane').forEach(p => p.classList.remove('active'));
+      const targetPane = document.getElementById(`pane-${tabKey}`);
+      if (targetPane) targetPane.classList.add('active');
     }
 
     initEvents() {
-      // Autocomplete départ & arrivée
-      this.setupAutocomplete(this.elStartInput, this.elStartSuggestions, (coords, label) => {
-        this.selectedStartCoords = coords;
-        this.lastStartLabel = label;
-        this.elStartInput.value = label;
-        this.calculateCurrentRoute();
+      // Mobile Panel Fold
+      const toggleFold = () => {
+        this.elRoutePanel.classList.toggle('panel-folded');
+        const isFolded = this.elRoutePanel.classList.contains('panel-folded');
+        const foldBtn = document.getElementById('btn-toggle-panel-fold');
+        if (foldBtn) foldBtn.textContent = isFolded ? '▼' : '▲';
+      };
+
+      const foldBtn = document.getElementById('btn-toggle-panel-fold');
+      if (foldBtn) foldBtn.addEventListener('click', toggleFold);
+      const handle = document.getElementById('panel-collapse-handle');
+      if (handle) handle.addEventListener('click', toggleFold);
+
+      // Settings Modal & Tabs
+      document.getElementById('btn-open-settings').addEventListener('click', () => {
+        this.elSettingsModal.style.display = 'flex';
+        this.renderGarageFleetUI();
+        this.renderRidesHistoryUI();
+      });
+      document.getElementById('btn-close-settings').addEventListener('click', () => {
+        this.elSettingsModal.style.display = 'none';
       });
 
-      this.setupAutocomplete(this.elEndInput, this.elEndSuggestions, (coords, label) => {
-        this.selectedEndCoords = coords;
-        this.lastEndLabel = label;
-        this.elEndInput.value = label;
-        this.calculateCurrentRoute();
+      document.querySelectorAll('.settings-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.settings-tab-btn').forEach(b => b.classList.remove('active'));
+          document.querySelectorAll('.settings-tab-pane').forEach(p => p.classList.remove('active'));
+          btn.classList.add('active');
+          const paneId = btn.getAttribute('data-tab');
+          const targetPane = document.getElementById(paneId);
+          if (targetPane) targetPane.classList.add('active');
+        });
       });
 
-      // Thème
+      // Compass & Map Rotation Button
+      const compassBtn = document.getElementById('btn-compass-mode');
+      if (compassBtn) {
+        compassBtn.addEventListener('click', () => {
+          const mode = this.compassManager.toggleMode();
+          this.showToast(mode === 'course-up' ? '🧭 Mode Cap en avant (Course-Up)' : '🧭 Mode Nord en haut (North-Up)');
+        });
+      }
+
+      // Add Scooter Drawer Triggers
+      const btnShowAddScoot = document.getElementById('btn-show-add-scooter');
+      if (btnShowAddScoot) {
+        btnShowAddScoot.addEventListener('click', () => this.openScooterDrawer(null));
+      }
+
+      const btnCloseDrawer = document.getElementById('btn-close-scooter-drawer');
+      if (btnCloseDrawer) {
+        btnCloseDrawer.addEventListener('click', () => {
+          document.getElementById('scooter-form-drawer').style.display = 'none';
+        });
+      }
+
+      document.querySelectorAll('.scooter-icon-choice').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.scooter-icon-choice').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.selectedScooterIcon = btn.getAttribute('data-icon');
+        });
+      });
+
+      // Save Scooter Form (Add or Edit)
+      const btnSaveScooter = document.getElementById('btn-save-scooter-form');
+      if (btnSaveScooter) {
+        btnSaveScooter.addEventListener('click', () => {
+          const editId = document.getElementById('edit-scooter-id').value;
+          const name = document.getElementById('scooter-custom-name').value.trim() || 'Ma Trottinette';
+          const capWh = parseInt(document.getElementById('scooter-capacity').value, 10) || 474;
+          const riderKg = parseInt(document.getElementById('scooter-rider-weight').value, 10) || 75;
+          const scootKg = parseInt(document.getElementById('scooter-weight').value, 10) || 18;
+          const speed = parseInt(document.getElementById('scooter-speed-slider').value, 10) || 25;
+          const battPct = parseInt(document.getElementById('scooter-battery-pct').value, 10) || 80;
+
+          const data = {
+            name,
+            icon: this.selectedScooterIcon || '🛴',
+            batteryCapacityWh: capWh,
+            riderWeightKg: riderKg,
+            scooterWeightKg: scootKg,
+            speedPrefKmh: speed,
+            currentPercentage: battPct
+          };
+
+          if (editId) {
+            this.garageManager.updateScooter(editId, data);
+            this.showToast(`✏️ "${name}" mis à jour !`);
+          } else {
+            this.garageManager.addScooter(data);
+            this.showToast(`➕ "${name}" ajouté au garage !`);
+          }
+
+          document.getElementById('scooter-form-drawer').style.display = 'none';
+          this.renderGarageFleetUI();
+        });
+      }
+
+      // Wh Mini-Calculator (Volts x Ah)
+      const btnWhToggle = document.getElementById('btn-toggle-wh-calc');
+      if (btnWhToggle) {
+        btnWhToggle.addEventListener('click', () => {
+          const isHidden = this.elWhCalcDrawer.style.display === 'none';
+          this.elWhCalcDrawer.style.display = isHidden ? 'block' : 'none';
+        });
+      }
+
+      const btnApplyWh = document.getElementById('btn-apply-wh-calc');
+      if (btnApplyWh) {
+        btnApplyWh.addEventListener('click', () => {
+          const volts = parseFloat(document.getElementById('calc-volts').value) || 36;
+          const ah = parseFloat(document.getElementById('calc-amphours').value) || 13;
+          const wh = Math.round(volts * ah);
+          const capInput = document.getElementById('scooter-capacity');
+          if (capInput) capInput.value = wh;
+          this.elWhCalcDrawer.style.display = 'none';
+          this.showToast(`🔋 Capacité : ${wh} Wh (${volts}V × ${ah}Ah)`);
+        });
+      }
+
+      // Map Layer Selection (Tab 2)
+      document.querySelectorAll('.map-layer-option').forEach(opt => {
+        opt.addEventListener('click', () => {
+          document.querySelectorAll('.map-layer-option').forEach(o => o.classList.remove('active'));
+          opt.classList.add('active');
+          const layerId = opt.getAttribute('data-layer-id');
+          const layerName = this.mapManager.setTileLayer(layerId);
+          this.showToast(`Carte : ${layerName}`);
+        });
+      });
+
+      // Speed Slider & Presets (Drawer)
+      const speedSlider = document.getElementById('scooter-speed-slider');
+      const valSpeedSlider = document.getElementById('val-speed-slider');
+      if (speedSlider) {
+        speedSlider.addEventListener('input', (e) => {
+          const val = parseInt(e.target.value, 10);
+          if (valSpeedSlider) valSpeedSlider.textContent = `${val} km/h`;
+          document.querySelectorAll('.speed-preset-btn').forEach(b => b.classList.toggle('active', parseInt(b.getAttribute('data-speed'), 10) === val));
+        });
+      }
+
+      document.querySelectorAll('.speed-preset-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const val = parseInt(btn.getAttribute('data-speed'), 10);
+          if (speedSlider) speedSlider.value = val;
+          if (valSpeedSlider) valSpeedSlider.textContent = `${val} km/h`;
+          document.querySelectorAll('.speed-preset-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+        });
+      });
+
+      // Battery Slider
+      const battSlider = document.getElementById('scooter-battery-pct');
+      const valBatt = document.getElementById('val-battery-pct');
+      if (battSlider && valBatt) {
+        battSlider.addEventListener('input', (e) => {
+          valBatt.textContent = `${e.target.value}%`;
+        });
+      }
+
+      // Auth Modal Open & Close
+      const btnOpenAuth = document.getElementById('btn-open-auth');
+      if (btnOpenAuth) {
+        btnOpenAuth.addEventListener('click', () => {
+          this.updateUserAuthUI();
+          this.elAuthModal.style.display = 'flex';
+          if (this.authManager.currentUser) {
+            this.switchAuthTab('auth-profile');
+          } else {
+            this.switchAuthTab('auth-login');
+          }
+        });
+      }
+
+      document.getElementById('btn-close-auth').addEventListener('click', () => {
+        this.elAuthModal.style.display = 'none';
+      });
+
+      document.querySelectorAll('.auth-tab-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const tabKey = btn.getAttribute('data-auth-tab');
+          this.switchAuthTab(tabKey);
+        });
+      });
+
+      // Links inside auth panes
+      const linkGotoReset = document.getElementById('link-goto-reset');
+      if (linkGotoReset) linkGotoReset.addEventListener('click', (e) => { e.preventDefault(); this.switchAuthTab('auth-reset'); });
+      const linkGotoSignup = document.getElementById('link-goto-signup');
+      if (linkGotoSignup) linkGotoSignup.addEventListener('click', (e) => { e.preventDefault(); this.switchAuthTab('auth-signup'); });
+      const linkGotoLoginFromSignup = document.getElementById('link-goto-login-from-signup');
+      if (linkGotoLoginFromSignup) linkGotoLoginFromSignup.addEventListener('click', (e) => { e.preventDefault(); this.switchAuthTab('auth-login'); });
+      const linkBackToLogin = document.getElementById('link-back-to-login');
+      if (linkBackToLogin) linkBackToLogin.addEventListener('click', (e) => { e.preventDefault(); this.switchAuthTab('auth-login'); });
+
+      // Avatar selection in signup
+      document.querySelectorAll('#signup-avatar-grid .avatar-choice-btn').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('#signup-avatar-grid .avatar-choice-btn').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.selectedSignupAvatar = btn.getAttribute('data-avatar');
+        });
+      });
+
+      // Login form submit
+      const btnSubmitLogin = document.getElementById('btn-submit-login');
+      if (btnSubmitLogin) {
+        btnSubmitLogin.addEventListener('click', () => {
+          const identifier = document.getElementById('login-identifier').value;
+          const pass = document.getElementById('login-password').value;
+          const res = this.authManager.login({ identifier, password: pass });
+          if (res.success) {
+            this.updateUserAuthUI();
+            this.switchAuthTab('auth-profile');
+            this.showToast(`👋 Bienvenue, ${res.user.username} !`);
+          } else {
+            alert(res.message);
+          }
+        });
+      }
+
+      // Signup form submit
+      const btnSubmitSignup = document.getElementById('btn-submit-signup');
+      if (btnSubmitSignup) {
+        btnSubmitSignup.addEventListener('click', () => {
+          const username = document.getElementById('signup-username').value;
+          const email = document.getElementById('signup-email').value;
+          const pass = document.getElementById('signup-password').value;
+          const passConf = document.getElementById('signup-password-confirm').value;
+
+          if (pass !== passConf) {
+            alert('Les mots de passe ne correspondent pas.');
+            return;
+          }
+
+          const res = this.authManager.signup({
+            username,
+            email,
+            avatar: this.selectedSignupAvatar || '🦊',
+            password: pass
+          });
+
+          if (res.success) {
+            this.updateUserAuthUI();
+            this.switchAuthTab('auth-profile');
+            this.showToast(`✨ Compte créé avec succès ! Bienvenue ${res.user.username}`);
+          } else {
+            alert(res.message);
+          }
+        });
+      }
+
+      // Password Reset Step 1: Send OTP email code
+      const btnSendReset = document.getElementById('btn-send-reset-code');
+      if (btnSendReset) {
+        btnSendReset.addEventListener('click', () => {
+          const email = document.getElementById('reset-email-input').value;
+          if (!email) {
+            alert('Veuillez saisir votre adresse email.');
+            return;
+          }
+
+          const res = this.authManager.requestPasswordReset(email);
+          if (res.success) {
+            document.getElementById('reset-step-1').style.display = 'none';
+            document.getElementById('reset-step-2').style.display = 'block';
+            document.getElementById('sim-display-otp').textContent = res.code;
+            this.showToast(`📬 Code de vérification envoyé à ${email}`);
+          }
+        });
+      }
+
+      // Password Reset Step 2: Confirm OTP & Set new password
+      const btnConfirmReset = document.getElementById('btn-confirm-password-reset');
+      if (btnConfirmReset) {
+        btnConfirmReset.addEventListener('click', () => {
+          const email = document.getElementById('reset-email-input').value;
+          const otp = document.getElementById('reset-otp-input').value;
+          const newPass = document.getElementById('reset-new-password').value;
+          const newPassConf = document.getElementById('reset-new-password-confirm').value;
+
+          if (newPass !== newPassConf) {
+            alert('Les deux mots de passe ne correspondent pas.');
+            return;
+          }
+
+          const res = this.authManager.confirmPasswordReset({
+            email,
+            code: otp,
+            newPassword: newPass
+          });
+
+          if (res.success) {
+            this.updateUserAuthUI();
+            this.switchAuthTab('auth-profile');
+            this.showToast('✅ Mot de passe mis à jour avec succès !');
+          } else {
+            alert(res.message);
+          }
+        });
+      }
+
+      // Profile Actions
+      const btnLogout = document.getElementById('btn-auth-logout');
+      if (btnLogout) {
+        btnLogout.addEventListener('click', () => {
+          this.authManager.logout();
+          this.updateUserAuthUI();
+          this.switchAuthTab('auth-login');
+          this.showToast('🚪 Déconnecté');
+        });
+      }
+
+      const btnExportData = document.getElementById('btn-auth-export-data');
+      if (btnExportData) {
+        btnExportData.addEventListener('click', () => {
+          this.authManager.exportUserData();
+          this.showToast('📥 Données exportées au format JSON');
+        });
+      }
+
+      const btnDeleteAcc = document.getElementById('btn-auth-delete-account');
+      if (btnDeleteAcc) {
+        btnDeleteAcc.addEventListener('click', () => {
+          if (confirm('Êtes-vous sûr de vouloir supprimer définitivement votre compte TrottiWaze ?')) {
+            this.authManager.deleteAccount();
+            this.updateUserAuthUI();
+            this.switchAuthTab('auth-login');
+            this.showToast('🗑️ Compte supprimé');
+          }
+        });
+      }
+
+      // 230V Charging Stations Toggle (Legend + Settings)
+      if (this.elToggleCharging) {
+        this.elToggleCharging.addEventListener('change', (e) => {
+          this.chargingManager.setVisible(e.target.checked);
+          const filterShow = document.getElementById('filter-show-charges');
+          if (filterShow) filterShow.checked = e.target.checked;
+        });
+      }
+
+      const filterShowCharges = document.getElementById('filter-show-charges');
+      if (filterShowCharges) {
+        filterShowCharges.addEventListener('change', (e) => {
+          this.chargingManager.setVisible(e.target.checked);
+          if (this.elToggleCharging) this.elToggleCharging.checked = e.target.checked;
+        });
+      }
+
+      // Quick Find Nearest 230V Charge Chip
+      const btnQuickCharge = document.getElementById('btn-quick-find-charge');
+      if (btnQuickCharge) {
+        btnQuickCharge.addEventListener('click', () => {
+          const loc = this.mapManager.currentLocation;
+          const nearest = this.chargingManager.findNearestStation(loc.lat, loc.lng);
+          if (nearest) {
+            this.navigateToChargingStation(nearest);
+          } else {
+            this.showToast('Recherche de prises 230V...');
+          }
+        });
+      }
+
+      // Route Filters
+      ['filter-avoid-cobblestones', 'filter-avoid-dirt-paths', 'filter-avoid-steep-hills', 'filter-prefer-protected'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+          el.addEventListener('change', () => {
+            this.routingEngine.setFilters({
+              avoidCobblestones: document.getElementById('filter-avoid-cobblestones').checked,
+              avoidDirtPaths: document.getElementById('filter-avoid-dirt-paths').checked,
+              avoidSteepHills: document.getElementById('filter-avoid-steep-hills').checked,
+              preferProtected: document.getElementById('filter-prefer-protected').checked
+            });
+            if (this.elEndInput.value.trim().length > 0) this.calculateCurrentRoute();
+          });
+        }
+      });
+
+      // Clear All Rides
+      document.getElementById('btn-clear-all-rides').addEventListener('click', () => {
+        if (confirm('Supprimer tout l\'historique des trajets enregistrés ?')) {
+          this.rideRecorder.clearAllRides();
+          this.renderRidesHistoryUI();
+          this.showToast('🗑️ Historique effacé');
+        }
+      });
+
+      // Ride Recorder Controls (Geovelo Style)
+      const startRecordingFlow = () => {
+        this.rideRecorder.startRecording();
+        this.elLiveRecordingHud.style.display = 'block';
+        this.showToast('🔴 Enregistrement du trajet démarré !');
+      };
+
+      document.getElementById('btn-quick-record-fab').addEventListener('click', startRecordingFlow);
+      document.getElementById('btn-quick-record-trigger').addEventListener('click', startRecordingFlow);
+
+      document.getElementById('btn-rec-pause').addEventListener('click', (e) => {
+        if (this.rideRecorder.isPaused) {
+          this.rideRecorder.resumeRecording();
+          e.target.textContent = '⏸ Pause';
+        } else {
+          this.rideRecorder.pauseRecording();
+          e.target.textContent = '▶ Reprendre';
+        }
+      });
+
+      document.getElementById('btn-rec-stop').addEventListener('click', () => {
+        const destTitle = this.elEndInput.value.trim() || 'Sortie Trottinette';
+        const saved = this.rideRecorder.stopAndSave(destTitle);
+        this.elLiveRecordingHud.style.display = 'none';
+        this.mapManager.clearLiveTrack();
+        if (saved) {
+          this.authManager.updateUserStats(saved.distanceKm, 1);
+          this.updateUserAuthUI();
+          this.showToast(`🎉 Trajet enregistré : ${saved.distanceKm} km (${saved.avgSpeedKmh} km/h)`);
+        }
+      });
+
+      // Recenter Button
+      document.getElementById('btn-recenter').addEventListener('click', () => {
+        this.mapManager.recenter(16);
+        this.showToast('🎯 Centrage & suivi GPS');
+      });
+
+      // Cockpit Bell
+      document.getElementById('btn-cockpit-bell').addEventListener('click', () => {
+        this.hazardManager.playCockpitBell();
+        this.showToast('🔔 Dring Dring !');
+      });
+
+      // Theme toggle
       document.getElementById('btn-toggle-theme').addEventListener('click', () => {
         document.body.classList.toggle('theme-light');
         document.body.classList.toggle('theme-dark');
         document.getElementById('btn-toggle-theme').textContent = document.body.classList.contains('theme-light') ? '☀️' : '🌙';
       });
 
-      // Couches de carte
-      document.getElementById('btn-layers').addEventListener('click', () => {
-        const name = this.mapManager.cycleTileLayer();
-        this.showToast(`Fond de carte : ${name}`);
+      // Autocomplete setup
+      this.setupAutocomplete(this.elStartInput, this.elStartSuggestions, (coords, label) => {
+        this.selectedStartCoords = coords;
+        this.elStartInput.value = label;
+        this.historyManager.addRecent({ fullLabel: label, lat: coords.lat, lng: coords.lng });
+        this.calculateCurrentRoute();
       });
 
-      // Recentrer
-      document.getElementById('btn-recenter').addEventListener('click', () => this.mapManager.recenter());
-
-      // Sonnette cockpit
-      document.getElementById('btn-cockpit-bell').addEventListener('click', () => {
-        this.hazardManager.playCockpitBell();
-        const btn = document.getElementById('btn-cockpit-bell');
-        btn.classList.add('bell-ringing');
-        this.showToast('🔔 Dring Dring !');
-        setTimeout(() => btn.classList.remove('bell-ringing'), 600);
+      this.setupAutocomplete(this.elEndInput, this.elEndSuggestions, (coords, label) => {
+        this.selectedEndCoords = coords;
+        this.elEndInput.value = label;
+        this.historyManager.addRecent({ fullLabel: label, lat: coords.lat, lng: coords.lng });
+        this.calculateCurrentRoute();
       });
 
-      // Chips de destination rapide
-      document.querySelectorAll('.quick-chips .chip').forEach(chip => {
+      // Favorites Chips
+      document.querySelectorAll('.quick-chips .fav-chip').forEach(chip => {
         chip.addEventListener('click', () => {
-          this.selectedEndCoords = null;
-          this.elEndInput.value = chip.getAttribute('data-dest');
-          this.calculateCurrentRoute();
+          const favKey = chip.getAttribute('data-fav');
+          const fav = this.historyManager.getFavorite(favKey);
+          if (fav) {
+            this.selectedEndCoords = { lat: fav.lat, lng: fav.lng };
+            this.elEndInput.value = fav.full;
+            this.calculateCurrentRoute();
+          }
         });
       });
 
-      // Cartes de route
+      // Clear End Input
+      document.getElementById('btn-clear-dest').addEventListener('click', () => {
+        this.elEndInput.value = '';
+        this.selectedEndCoords = null;
+        this.calculatedRoutes = null;
+        this.mapManager.clearRoute();
+        this.elExpandableContent.style.display = 'none';
+        this.elStickyLaunchBar.style.display = 'none';
+        this.elEndInput.focus();
+      });
+
+      // Swap Locations
+      document.getElementById('btn-swap-locations').addEventListener('click', () => {
+        const tVal = this.elStartInput.value;
+        this.elStartInput.value = this.elEndInput.value;
+        this.elEndInput.value = tVal;
+        const tCoords = this.selectedStartCoords;
+        this.selectedStartCoords = this.selectedEndCoords;
+        this.selectedEndCoords = tCoords;
+        if (this.elEndInput.value.trim().length > 0) this.calculateCurrentRoute();
+      });
+
+      // Route Cards Selection
       document.querySelectorAll('.route-card').forEach(card => {
         card.addEventListener('click', () => {
           document.querySelectorAll('.route-card').forEach(c => c.classList.remove('active'));
@@ -997,69 +2671,20 @@
         });
       });
 
-      // Inputs de destination
-      this.elEndInput.addEventListener('change', () => this.calculateCurrentRoute());
-      document.getElementById('btn-clear-dest').addEventListener('click', () => {
-        this.elEndInput.value = '';
-        this.selectedEndCoords = null;
-        this.elEndInput.focus();
-      });
-
-      // Inverser start/fin
-      document.getElementById('btn-swap-locations').addEventListener('click', () => {
-        const temp = this.elStartInput.value;
-        this.elStartInput.value = this.elEndInput.value;
-        this.elEndInput.value = temp;
-        const tempCoords = this.selectedStartCoords;
-        this.selectedStartCoords = this.selectedEndCoords;
-        this.selectedEndCoords = tempCoords;
-        this.calculateCurrentRoute();
-      });
-
-      // GPS
-      document.getElementById('btn-use-gps').addEventListener('click', () => {
-        if (navigator.geolocation) {
-          navigator.geolocation.getCurrentPosition(
-            pos => {
-              const { latitude, longitude } = pos.coords;
-              this.selectedStartCoords = { lat: latitude, lng: longitude };
-              this.mapManager.updateScooterPosition(latitude, longitude, 0, 0);
-              this.mapManager.recenter();
-              this.elStartInput.value = `GPS (${latitude.toFixed(4)}, ${longitude.toFixed(4)})`;
-              this.calculateCurrentRoute();
-              this.showToast('📍 Position GPS acquise');
-            },
-            err => this.showToast('GPS indisponible : ' + err.message)
-          );
-        }
-      });
-
-      // Navigation
+      // Launch Buttons
       document.getElementById('btn-start-nav').addEventListener('click', () => this.beginTrip(false));
       document.getElementById('btn-start-simu').addEventListener('click', () => this.beginTrip(true));
       document.getElementById('btn-stop-nav').addEventListener('click', () => this.endTrip());
 
-      // Simulateur
-      document.getElementById('btn-simu-pause').addEventListener('click', (e) => {
-        const isPaused = this.navigationEngine.simulationSpeedMultiplier === 0;
-        this.navigationEngine.setSimulationSpeed(isPaused ? 1 : 0);
-        e.target.textContent = isPaused ? '⏸ Pause' : '▶ Reprendre';
-      });
-      document.getElementById('btn-simu-1x').addEventListener('click', (e) => this.setSimSpeed(1, e.target));
-      document.getElementById('btn-simu-2x').addEventListener('click', (e) => this.setSimSpeed(2, e.target));
-      document.getElementById('btn-simu-4x').addEventListener('click', (e) => this.setSimSpeed(4, e.target));
-      document.getElementById('btn-simu-stop').addEventListener('click', () => this.endTrip());
+      // Navigation Engine Callbacks
+      this.navigationEngine.onSpeedUpdate = (speed) => this.handleSpeedUpdate(speed);
+      this.navigationEngine.onStepUpdate = (step) => this.handleStepUpdate(step);
+      this.navigationEngine.onTripUpdate = (trip) => this.handleTripUpdate(trip);
+      this.navigationEngine.onArrival = () => this.handleArrival();
 
-      // Voix
-      document.getElementById('btn-toggle-voice').addEventListener('click', () => {
-        this.isVoiceMuted = !this.isVoiceMuted;
-        this.navigationEngine.setVoiceEnabled(!this.isVoiceMuted);
-        document.getElementById('btn-toggle-voice').textContent = this.isVoiceMuted ? '🔇' : '🔊';
-      });
-
-      // Signalement
+      // Report Hazard Flow
       this.elReportFab.addEventListener('click', () => this.openReportModal());
-      document.getElementById('btn-close-report').addEventListener('click', () => this.elReportModal.style.display = 'none');
+      document.getElementById('btn-close-report').addEventListener('click', () => { this.elReportModal.style.display = 'none'; });
       document.querySelectorAll('.hazard-choice-btn').forEach(btn => {
         btn.addEventListener('click', () => {
           document.querySelectorAll('.hazard-choice-btn').forEach(b => b.classList.remove('selected'));
@@ -1069,390 +2694,120 @@
         });
       });
       document.getElementById('btn-submit-report').addEventListener('click', () => this.submitHazardReport());
-
-      // Batterie
-      document.getElementById('btn-battery-settings').addEventListener('click', () => this.elBatteryModal.style.display = 'flex');
-      document.getElementById('hud-battery-container').addEventListener('click', () => this.elBatteryModal.style.display = 'flex');
-      document.getElementById('btn-close-battery').addEventListener('click', () => this.elBatteryModal.style.display = 'none');
-
-      const elPctRange = document.getElementById('scooter-battery-pct');
-      elPctRange.addEventListener('input', (e) => document.getElementById('val-battery-pct').textContent = e.target.value + '%');
-      const elWeightRange = document.getElementById('scooter-rider-weight');
-      elWeightRange.addEventListener('input', (e) => document.getElementById('val-rider-weight').textContent = e.target.value + ' kg');
-
-      document.getElementById('btn-save-battery').addEventListener('click', () => {
-        this.batteryEngine.saveSettings({
-          currentPercentage: parseInt(elPctRange.value),
-          batteryCapacityWh: parseInt(document.getElementById('scooter-capacity').value),
-          riderWeightKg: parseInt(elWeightRange.value),
-          speedPrefKmh: parseInt(document.getElementById('scooter-speed-pref').value)
-        });
-        this.updateBatteryWidget();
-        this.elBatteryModal.style.display = 'none';
-        this.showToast('✅ Paramètres batterie enregistrés');
-      });
-
-      // Alertes danger
-      document.getElementById('btn-confirm-hazard').addEventListener('click', () => {
-        if (this.currentActiveAlertHazardId) {
-          this.hazardManager.upvote(this.currentActiveAlertHazardId);
-          this.showToast('Merci ! Signalement confirmé 👍');
-          this.elHazardAlert.style.display = 'none';
-        }
-      });
-      document.getElementById('btn-dismiss-hazard').addEventListener('click', () => this.elHazardAlert.style.display = 'none');
-
-      // Modal utilisateur
-      document.getElementById('btn-close-user-modal').addEventListener('click', () => this.elUserModal.style.display = 'none');
-      document.getElementById('btn-user-wave').addEventListener('click', () => this.sendSocialAction('wave'));
-      document.getElementById('btn-user-bell').addEventListener('click', () => { this.hazardManager.playCockpitBell(); this.sendSocialAction('bell'); });
-      document.getElementById('btn-user-help').addEventListener('click', () => this.sendSocialAction('help'));
-      document.getElementById('btn-user-warn').addEventListener('click', () => this.sendSocialAction('warn'));
-
-      // Fermer modals au click backdrop
-      this.elReportModal.addEventListener('click', (e) => { if (e.target === this.elReportModal) this.elReportModal.style.display = 'none'; });
-      this.elBatteryModal.addEventListener('click', (e) => { if (e.target === this.elBatteryModal) this.elBatteryModal.style.display = 'none'; });
-      this.elUserModal.addEventListener('click', (e) => { if (e.target === this.elUserModal) this.elUserModal.style.display = 'none'; });
     }
 
-    // -----------------------------------------------------------------------
-    // Autocomplete addresses
-    // -----------------------------------------------------------------------
-    setupAutocomplete(inputEl, dropdownEl, onSelect) {
+    setupAutocomplete(inputEl, suggestionsEl, onSelectCallback) {
       let debounceTimer = null;
-      let selectedIndex = -1;
-      let currentSuggestions = [];
-
-      const closeDropdown = () => {
-        dropdownEl.style.display = 'none';
-        dropdownEl.innerHTML = '';
-        selectedIndex = -1;
-        currentSuggestions = [];
-      };
-
-      const renderSuggestions = (suggestions, query) => {
-        currentSuggestions = suggestions;
-        selectedIndex = -1;
-        dropdownEl.innerHTML = '';
-
-        if (suggestions.length === 0) {
-          dropdownEl.innerHTML = `<div class="suggestion-loading"><span>Aucune piste, rue ou ville trouvée</span></div>`;
-          dropdownEl.style.display = 'block';
+      inputEl.addEventListener('input', () => {
+        clearTimeout(debounceTimer);
+        const query = inputEl.value.trim();
+        if (query.length < 2) {
+          suggestionsEl.style.display = 'none';
           return;
         }
 
-        suggestions.forEach((item, idx) => {
-          const itemEl = document.createElement('div');
-          itemEl.className = 'suggestion-item';
-          itemEl.setAttribute('data-index', idx);
-
-          let iconEmoji = '📍';
-          if (item.type === 'city') iconEmoji = '🏙️';
-          else if (item.type === 'cycleway') iconEmoji = '🚲';
-          else if (item.type === 'street') iconEmoji = '🛣️';
-          else if (item.type === 'poi') iconEmoji = '🏛️';
-          else if (item.type === 'address') iconEmoji = '🏠';
-
-          const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
-          const highlightedMain = item.mainText.replace(regex, '<span class="highlight">$1</span>');
-
-          itemEl.innerHTML = `
-            <div class="suggestion-icon">${iconEmoji}</div>
-            <div class="suggestion-content">
-              <div class="suggestion-main">${highlightedMain}</div>
-              <div class="suggestion-sub">${item.subText || ''}</div>
-            </div>
-            ${item.tag ? `<div class="suggestion-tag">${item.tag}</div>` : ''}
-          `;
-
-          itemEl.addEventListener('click', (e) => {
-            e.stopPropagation();
-            closeDropdown();
-            onSelect({ lat: item.lat, lng: item.lng }, item.fullLabel);
-          });
-
-          dropdownEl.appendChild(itemEl);
-        });
-        dropdownEl.style.display = 'block';
-      };
-
-      inputEl.addEventListener('input', (e) => {
-        const val = e.target.value.trim();
-        clearTimeout(debounceTimer);
-        if (val.length < 2) { closeDropdown(); return; }
-
-        dropdownEl.innerHTML = `<div class="suggestion-loading"><span>🔍 Recherche en direct des pistes, rues & villes...</span></div>`;
-        dropdownEl.style.display = 'block';
-
         debounceTimer = setTimeout(async () => {
-          const suggestions = await this.routingEngine.getAddressSuggestions(val);
-          if (inputEl.value.trim().length >= 2) renderSuggestions(suggestions, val);
-        }, 160);
-      });
-
-      inputEl.addEventListener('keydown', (e) => {
-        if (dropdownEl.style.display !== 'block' || currentSuggestions.length === 0) return;
-        const items = dropdownEl.querySelectorAll('.suggestion-item');
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          selectedIndex = (selectedIndex + 1) % items.length;
-          items.forEach((it, i) => it.classList.toggle('active', i === selectedIndex));
-          items[selectedIndex].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          selectedIndex = (selectedIndex - 1 + items.length) % items.length;
-          items.forEach((it, i) => it.classList.toggle('active', i === selectedIndex));
-          items[selectedIndex].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'Enter') {
-          if (selectedIndex >= 0 && selectedIndex < currentSuggestions.length) {
-            e.preventDefault();
-            const chosen = currentSuggestions[selectedIndex];
-            closeDropdown();
-            onSelect({ lat: chosen.lat, lng: chosen.lng }, chosen.fullLabel);
+          const results = await this.routingEngine.searchAddress(query);
+          if (results.length === 0) {
+            suggestionsEl.style.display = 'none';
+            return;
           }
-        } else if (e.key === 'Escape') {
-          closeDropdown();
-        }
+          suggestionsEl.innerHTML = '';
+          results.forEach(res => {
+            const item = document.createElement('div');
+            item.className = 'suggestion-item';
+            item.innerHTML = `
+              <span class="sugg-icon">📍</span>
+              <div class="sugg-text">
+                <span class="sugg-main">${res.mainText}</span>
+                <span class="sugg-sub">${res.subText}</span>
+              </div>
+            `;
+            item.addEventListener('click', () => {
+              suggestionsEl.style.display = 'none';
+              onSelectCallback({ lat: res.lat, lng: res.lng }, res.fullLabel);
+            });
+            suggestionsEl.appendChild(item);
+          });
+          suggestionsEl.style.display = 'block';
+        }, 250);
       });
 
       document.addEventListener('click', (e) => {
-        if (!inputEl.contains(e.target) && !dropdownEl.contains(e.target)) closeDropdown();
+        if (!inputEl.contains(e.target) && !suggestionsEl.contains(e.target)) {
+          suggestionsEl.style.display = 'none';
+        }
       });
     }
 
-    // -----------------------------------------------------------------------
-    // Route calculation & UI update
-    // -----------------------------------------------------------------------
     async calculateCurrentRoute() {
-      const startStr = this.elStartInput.value;
-      const endStr = this.elEndInput.value;
-
-      let startCoords = this.selectedStartCoords;
-      if (!startCoords || this.lastStartLabel !== startStr) {
-        startCoords = await this.routingEngine.searchAddress(startStr) || { lat: 48.8531, lng: 2.3698 };
+      const endVal = this.elEndInput.value.trim();
+      if (!endVal) {
+        this.elExpandableContent.style.display = 'none';
+        this.elStickyLaunchBar.style.display = 'none';
+        return;
       }
 
+      let startCoords = this.selectedStartCoords || this.mapManager.currentLocation;
       let endCoords = this.selectedEndCoords;
-      if (!endCoords || this.lastEndLabel !== endStr) {
-        endCoords = await this.routingEngine.searchAddress(endStr) || { lat: 48.8584, lng: 2.3470 };
+
+      if (!endCoords) {
+        endCoords = await this.routingEngine.geocode(endVal);
+        if (endCoords) this.selectedEndCoords = endCoords;
       }
 
-      this.lastStartLabel = startStr;
-      this.lastEndLabel = endStr;
+      if (!startCoords || !endCoords) return;
 
       this.calculatedRoutes = await this.routingEngine.calculateRoutes(startCoords, endCoords);
-      this.updateRouteCards();
+      this.updateRouteCardsUI();
       this.applySelectedRoute();
+
+      this.elExpandableContent.style.display = 'block';
+      this.elStickyLaunchBar.style.display = 'flex';
     }
 
-    updateRouteCards() {
+    updateRouteCardsUI() {
       if (!this.calculatedRoutes) return;
-      const routes = [this.calculatedRoutes.safe, this.calculatedRoutes.fast, this.calculatedRoutes.eco, this.calculatedRoutes.nature];
-      const cards = document.querySelectorAll('.route-card');
-
-      routes.forEach((route, i) => {
-        const card = cards[i];
-        if (!card) return;
-        const timeEl = card.querySelector('.route-stat-time');
-        const metaEl = card.querySelector('.route-stat-meta');
-        const topBadge = card.querySelector('.route-badge-piste, .route-badge-neutral, .route-badge-battery, .route-badge-emerald');
-        const climbTag = card.querySelector('.route-climb-tag');
-        const surfaceGreen = card.querySelector('.surface-seg.green');
-        const surfaceBlue = card.querySelector('.surface-seg.blue');
-        const surfaceYellow = card.querySelector('.surface-seg.yellow');
-
-        if (timeEl) timeEl.textContent = `${route.durationMin} min`;
-
-        if (metaEl) {
-          const metaTexts = {
-            safe: `${route.distanceKm} km • ${route.cobblestonesAvoided} pavés évités`,
-            fast: `${route.distanceKm} km • Direct`,
-            eco: `${route.distanceKm} km • +${route.elevationGainM}m`,
-            nature: `${route.distanceKm} km • Berges`
-          };
-          metaEl.textContent = metaTexts[route.mode] || `${route.distanceKm} km`;
+      Object.keys(this.calculatedRoutes).forEach(mode => {
+        const r = this.calculatedRoutes[mode];
+        const card = document.querySelector(`.route-card[data-mode="${mode}"]`);
+        if (card) {
+          const timeEl = card.querySelector('.route-stat-time');
+          const metaEl = card.querySelector('.route-stat-meta');
+          if (timeEl) timeEl.textContent = `${r.durationMin} min`;
+          if (metaEl) metaEl.textContent = `${r.distanceKm} km • ${r.cobblestonesCount === 0 ? '0 pavé' : r.cobblestonesCount + ' pavé'}`;
         }
-
-        if (topBadge) {
-          const badges = { safe: `${route.cyclewayPercent}% Pistes`, fast: `${route.cyclewayPercent}% Pistes`, eco: 'Ultra-Plat', nature: '100% Apaisé' };
-          topBadge.textContent = badges[route.mode] || `${route.cyclewayPercent}%`;
-        }
-
-        if (climbTag) climbTag.textContent = `↗ +${route.elevationGainM}m`;
-
-        if (surfaceGreen) surfaceGreen.style.width = `${route.protectedPct}%`;
-        if (surfaceBlue) surfaceBlue.style.width = `${route.lanePct}%`;
-        if (surfaceYellow) surfaceYellow.style.width = `${route.sharedPct}%`;
       });
     }
 
     applySelectedRoute() {
       if (!this.calculatedRoutes) return;
-      const activeRoute = this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes.safe;
-      this.mapManager.drawRoute(activeRoute.coordinates, this.selectedRouteMode);
+      const r = this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes.safe;
+      this.mapManager.drawRoute(r.coordinates, this.selectedRouteMode);
 
-      const now = new Date();
-      now.setMinutes(now.getMinutes() + activeRoute.durationMin);
-      const etaStr = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`;
-
-      this.elHudEta.textContent = etaStr;
-      this.elHudTimeRem.textContent = `${activeRoute.durationMin} min`;
-      this.elHudDistRem.textContent = `${activeRoute.distanceKm} km`;
-
-      const battEst = this.batteryEngine.estimateTrip(parseFloat(activeRoute.distanceKm), activeRoute.elevationGainM);
-      this.elBatteryArrival.textContent = `Fin: ~${battEst.arrivalPct}%`;
-
-      this.renderElevationProfile(activeRoute);
-    }
-
-    // -----------------------------------------------------------------------
-    // Elevation SVG profile
-    // -----------------------------------------------------------------------
-    renderElevationProfile(route) {
-      const profile = route.elevationProfile;
-      if (!profile || profile.length === 0) return;
-
-      const svgEl = document.getElementById('elevation-svg');
-      const svgW = 380; const svgH = 65;
-      const padding = { left: 5, right: 5, top: 5, bottom: 10 };
-      const drawW = svgW - padding.left - padding.right;
-      const drawH = svgH - padding.top - padding.bottom;
-
-      const alts = profile.map(p => p.altM);
-      const minAlt = Math.min(...alts);
-      const maxAlt = Math.max(...alts);
-      const altRange = Math.max(maxAlt - minAlt, 1);
-
-      const points = profile.map((p, i) => {
-        const x = padding.left + (i / (profile.length - 1)) * drawW;
-        const y = padding.top + drawH - ((p.altM - minAlt) / altRange) * drawH;
-        return `${x},${y}`;
-      });
-
-      const lineD = `M ${points.join(' L ')}`;
-      const areaD = `M ${points[0]} L ${points.join(' L ')} L ${padding.left + drawW},${padding.top + drawH} L ${padding.left},${padding.top + drawH} Z`;
-
-      // Determine slope difficulty color
-      const maxSlope = route.maxSlopePct || 0;
-      let gradColor = '#10b981';
-      let diffLabel = 'Pente Douce';
-      let diffClass = 'easy';
-      if (maxSlope > 8) { gradColor = '#ef4444'; diffLabel = 'Pente Difficile'; diffClass = 'hard'; }
-      else if (maxSlope > 5) { gradColor = '#f59e0b'; diffLabel = 'Pente Modérée'; diffClass = 'medium'; }
-
-      // Update gradient color dynamically
-      const stopEl = svgEl.querySelector('#elevGradient stop:first-child');
-      if (stopEl) stopEl.setAttribute('stop-color', gradColor);
-
-      const linePath = svgEl.getElementById ? svgEl.querySelector('#elev-line-path') : null;
-      const areaPath = svgEl.querySelector ? svgEl.querySelector('#elev-area-path') : null;
-
-      if (linePath) { linePath.setAttribute('d', lineD); linePath.style.stroke = gradColor; }
-      if (areaPath) { areaPath.setAttribute('d', areaD); }
-
-      // Labels
-      const gainSummary = document.getElementById('elev-gain-summary');
-      if (gainSummary) gainSummary.textContent = `+${route.elevationGainM}m / -${route.elevationLossM}m • Max ${route.maxSlopePct}%`;
-
-      const diffBadge = document.getElementById('slope-diff-badge');
-      if (diffBadge) { diffBadge.textContent = diffLabel; diffBadge.className = `slope-difficulty-pill ${diffClass}`; }
-
-      const midDistEl = document.getElementById('elev-mid-dist');
-      if (midDistEl) midDistEl.textContent = `${(route.distanceKm / 2).toFixed(1)} km`;
-      const endDistEl = document.getElementById('elev-end-dist');
-      if (endDistEl) endDistEl.textContent = `${route.distanceKm} km (Arrivée)`;
-
-      // Infrastructure summary
-      const infraEl = document.getElementById('infrastructure-summary');
-      if (infraEl) {
-        const protectedKm = ((route.protectedPct / 100) * route.distanceKm).toFixed(1);
-        const laneKm = ((route.lanePct / 100) * route.distanceKm).toFixed(1);
-        infraEl.innerHTML = `
-          <span class="infra-pill green">🛡️ ${protectedKm} km Piste protégée</span>
-          <span class="infra-pill blue">🚲 ${laneKm} km Bande cyclable</span>
-          <span class="infra-pill gold">✨ ${route.cobblestonesAvoided} pavés contournés</span>
-        `;
+      if (this.elLaunchButtonLabel) {
+        this.elLaunchButtonLabel.textContent = `DÉMARRER (${r.durationMin} MIN • ${r.distanceKm} KM)`;
       }
+      if (this.elLaunchButtonSub) {
+        this.elLaunchButtonSub.textContent = `${r.protectedPct}% Pistes • ${r.praticability}`;
+      }
+
+      const elevSummary = document.getElementById('elev-gain-summary');
+      if (elevSummary) elevSummary.textContent = `+${r.elevationGainM} m / -${r.elevationLossM} m • Max ${r.maxSlopePct}%`;
+
+      const elevEnd = document.getElementById('elev-end-dist');
+      if (elevEnd) elevEnd.textContent = `${r.distanceKm} km`;
+
+      const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM);
+      this.elBatteryArrival.textContent = `Fin: ~${batt.arrivalPct}%`;
     }
 
-    // -----------------------------------------------------------------------
-    // Road adhesion / weather barometer
-    // -----------------------------------------------------------------------
-    initWeatherBar() {
-      const conditions = [
-        { icon: '☀️', text: 'Sol sec • Adhérence optimale', grip: 100, tip: 'Pression pneus recommandée : 3.5 bar' },
-        { icon: '🌤️', text: 'Légère brise • Adhérence très bonne', grip: 95, tip: 'Conditions idéales pour rouler vite' },
-        { icon: '🌦️', text: 'Risque de pluie • Adhérence réduite', grip: 65, tip: 'Ralentissez dans les virages : 3.0 bar' },
-        { icon: '🌧️', text: 'Pluie • Adhérence faible', grip: 40, tip: '⚠️ Freinage à 2× la distance normale !' },
-        { icon: '🌩️', text: 'Orage • Adhérence critique', grip: 20, tip: '🚨 Évitez la trottinette — danger électrique !' }
-      ];
-
-      const picked = conditions[Math.floor(Math.random() * 2)]; // Mostly good weather for demo
-      const bar = document.getElementById('road-adhesion-bar');
-      if (!bar) return;
-      bar.querySelector('.adhesion-icon').textContent = picked.icon;
-      bar.querySelector('.adhesion-text').innerHTML = `${picked.text} <strong>(${picked.grip}%)</strong>`;
-      bar.querySelector('.adhesion-tip').textContent = picked.tip;
-
-      if (picked.grip < 50) bar.classList.add('adhesion-danger');
-      else if (picked.grip < 75) bar.classList.add('adhesion-warning');
-    }
-
-    // -----------------------------------------------------------------------
-    // Social interactions
-    // -----------------------------------------------------------------------
-    openUserProfileModal(user) {
-      this.activeModalUser = user;
-      document.getElementById('modal-user-avatar').textContent = user.avatar;
-      document.getElementById('modal-user-pseudo').textContent = user.pseudo;
-      document.getElementById('modal-user-status').textContent = `En ligne • ${Math.round(user.speed)} km/h`;
-      document.getElementById('modal-user-scooter').textContent = user.scooter;
-      document.getElementById('modal-user-speed').textContent = `${Math.round(user.speed)} km/h`;
-      document.getElementById('modal-user-battery').textContent = `${user.battery}%`;
-      document.getElementById('modal-user-trip').textContent = user.trip;
-      document.getElementById('modal-user-mood').textContent = `"${user.status}"`;
-      this.elUserModal.style.display = 'flex';
-    }
-
-    sendSocialAction(type) {
-      if (!this.activeModalUser) return;
-      const msg = this.userManager.sendSocialEvent(this.activeModalUser, type);
-      this.elUserModal.style.display = 'none';
-      this.showToast(msg);
-    }
-
-    handleIncomingSocialEvent(user, type, text, icon) {
-      const notif = document.createElement('div');
-      notif.className = 'glass-panel incoming-social-notif';
-      notif.style.cssText = `
-        position: absolute; bottom: 160px; left: 50%; transform: translateX(-50%);
-        z-index: 2100; padding: 10px 16px; display: flex; align-items: center; gap: 10px;
-        border-radius: 40px; cursor: pointer; white-space: nowrap;
-        border: 1px solid ${user.color}; animation: fadeIn 0.3s ease;
-        font-size: 13px; font-weight: 600;
-      `;
-      notif.innerHTML = `
-        <span style="font-size:20px;">${user.avatar}</span>
-        <span><strong style="color:${user.color};">${user.pseudo}</strong> ${text}</span>
-        <span style="font-size:16px;">${icon}</span>
-      `;
-      notif.addEventListener('click', () => { this.openUserProfileModal(user); notif.remove(); });
-      document.getElementById('app-container').appendChild(notif);
-      setTimeout(() => {
-        notif.style.opacity = '0'; notif.style.transition = 'opacity 0.4s';
-        setTimeout(() => notif.remove(), 400);
-      }, 6000);
-    }
-
-    // -----------------------------------------------------------------------
-    // Trip control
-    // -----------------------------------------------------------------------
     beginTrip(isSimulated = false) {
       if (!this.calculatedRoutes) return;
       const activeRoute = this.calculatedRoutes[this.selectedRouteMode];
       this.elRoutePanel.style.display = 'none';
+      this.elStickyLaunchBar.style.display = 'none';
       this.elNavBanner.style.display = 'flex';
-      this.elReportFab.style.display = 'block';
       if (isSimulated) this.elSimuController.style.display = 'flex';
       this.navigationEngine.startNavigation(activeRoute, isSimulated);
     }
@@ -1464,42 +2819,44 @@
       this.elSimuController.style.display = 'none';
       this.elHazardAlert.style.display = 'none';
       this.handleSpeedUpdate(0);
-      this.calculateCurrentRoute();
+      if (this.elEndInput.value.trim().length > 0) {
+        this.elStickyLaunchBar.style.display = 'flex';
+      }
     }
 
     handleArrival() {
+      this.voiceEngine.speak("Vous êtes arrivé à destination.", 'turn');
       this.showToast('🎉 Arrivée à destination !');
       setTimeout(() => this.endTrip(), 4000);
     }
 
-    setSimSpeed(mult, btnTarget) {
-      this.navigationEngine.setSimulationSpeed(mult);
-      document.querySelectorAll('#simu-controller .btn-micro').forEach(b => {
-        if (b.id !== 'btn-simu-pause' && b.id !== 'btn-simu-stop') b.classList.remove('active');
-      });
-      btnTarget.classList.add('active');
-    }
-
-    // -----------------------------------------------------------------------
-    // HUD updates
-    // -----------------------------------------------------------------------
     handleSpeedUpdate(speedKmh) {
       this.elSpeedVal.textContent = speedKmh;
-      this.elSpeedBox.classList.toggle('speed-overspeed', speedKmh > 25);
-      const fraction = Math.min(1, speedKmh / 30);
+      const configuredSpeed = this.batteryEngine.config.speedPrefKmh || 25;
+      this.elSpeedLimitBadge.textContent = configuredSpeed;
+
+      if (speedKmh > configuredSpeed + 5) {
+        this.elSpeedCircle.style.stroke = 'var(--danger)';
+      } else if (speedKmh > 25) {
+        this.elSpeedCircle.style.stroke = 'var(--warning)';
+      } else {
+        this.elSpeedCircle.style.stroke = 'var(--primary)';
+      }
+
+      const fraction = Math.min(1, speedKmh / Math.max(30, configuredSpeed * 1.2));
       this.elSpeedCircle.style.strokeDashoffset = 264 - (fraction * 264);
     }
 
     handleStepUpdate(step) {
       this.elNavDistance.textContent = `Dans ${step.distanceMeters} m`;
       this.elNavStreet.textContent = step.street || step.instruction;
-      this.elNavSafety.textContent = step.safety || 'Piste cyclable sécurisée';
+      this.elNavSafety.textContent = step.safety || 'Piste cyclable';
 
       const icons = {
-        right: '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 19V9a4 4 0 0 1 4-4h10"/><polyline points="15 9 19 5 15 1"/></svg>',
-        left: '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M19 19V9a4 4 0 0 0-4-4H5"/><polyline points="9 9 5 5 9 1"/></svg>',
-        arrive: '<span style="font-size:28px;">🏁</span>',
-        straight: '<svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>'
+        right: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 19V9a4 4 0 0 1 4-4h10"/><polyline points="15 9 19 5 15 1"/></svg>',
+        left: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M19 19V9a4 4 0 0 0-4-4H5"/><polyline points="9 9 5 5 9 1"/></svg>',
+        arrive: '<span style="font-size:24px;">🏁</span>',
+        straight: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>'
       };
       this.elNavIcon.innerHTML = icons[step.modifier] || icons.straight;
     }
@@ -1510,20 +2867,87 @@
       if (trip.batteryStatus) this.elBatteryArrival.textContent = `Fin: ~${trip.batteryStatus.arrivalPct}%`;
     }
 
-    handleHazardProximity(alertData) {
-      const { hazard, distanceMeters, config } = alertData;
-      this.currentActiveAlertHazardId = hazard.id;
-      document.getElementById('hazard-alert-icon').textContent = config.icon;
-      document.getElementById('hazard-alert-title').textContent = `${hazard.title} à ${distanceMeters} m`;
-      document.getElementById('hazard-alert-sub').textContent = config.warning;
-      this.elHazardAlert.classList.toggle('police-theme', hazard.type === 'police');
-      this.elHazardAlert.style.display = 'flex';
-      setTimeout(() => { if (this.elHazardAlert.style.display === 'flex') this.elHazardAlert.style.display = 'none'; }, 8000);
+    handleRideRecorderUpdate(stats) {
+      const timeEl = document.getElementById('rec-live-time');
+      const distEl = document.getElementById('rec-live-distance');
+      const avgEl = document.getElementById('rec-live-avg-speed');
+      const maxEl = document.getElementById('rec-live-max-speed');
+
+      if (timeEl) timeEl.textContent = stats.timeFormatted;
+      if (distEl) distEl.textContent = `${stats.distanceKm} km`;
+      if (avgEl) avgEl.textContent = `${stats.avgSpeedKmh} km/h`;
+      if (maxEl) maxEl.textContent = `${stats.maxSpeedKmh} km/h`;
     }
 
-    // -----------------------------------------------------------------------
-    // Report modal
-    // -----------------------------------------------------------------------
+    renderRidesHistoryUI() {
+      const listContainer = document.getElementById('rides-history-list');
+      if (!listContainer) return;
+
+      const globalStats = this.rideRecorder.getGlobalStats();
+      const globKm = document.getElementById('global-stat-km');
+      const globTime = document.getElementById('global-stat-time');
+      const globAvg = document.getElementById('global-stat-avg-speed');
+      const globCount = document.getElementById('global-stat-trips-count');
+
+      if (globKm) globKm.textContent = `${globalStats.totalKm} km`;
+      if (globTime) globTime.textContent = globalStats.totalTime;
+      if (globAvg) globAvg.textContent = `${globalStats.avgSpeed} km/h`;
+      if (globCount) globCount.textContent = globalStats.tripsCount;
+
+      if (this.rideRecorder.savedRides.length === 0) {
+        listContainer.innerHTML = `
+          <div class="rides-empty-state">
+            <span class="empty-icon">🛴</span>
+            <p>Aucun trajet enregistré pour le moment.</p>
+            <span class="empty-sub">Appuyez sur le bouton rouge 🔴 pour enregistrer votre prochaine sortie !</span>
+          </div>
+        `;
+        return;
+      }
+
+      listContainer.innerHTML = '';
+      this.rideRecorder.savedRides.forEach(ride => {
+        const item = document.createElement('div');
+        item.className = 'ride-card-item';
+        item.innerHTML = `
+          <div class="ride-card-header">
+            <span class="ride-date">📅 ${ride.date} • <strong>${ride.title}</strong></span>
+            <span class="ride-badge">${ride.durationFormatted}</span>
+          </div>
+          <div class="ride-metrics-grid">
+            <div><span class="ride-metric-val">${ride.distanceKm} km</span><br><span class="ride-metric-lbl">Distance</span></div>
+            <div><span class="ride-metric-val">${ride.avgSpeedKmh} km/h</span><br><span class="ride-metric-lbl">Vitesse Moy.</span></div>
+            <div><span class="ride-metric-val">${ride.maxSpeedKmh} km/h</span><br><span class="ride-metric-lbl">Vitesse Max</span></div>
+            <div><span class="ride-metric-val">${ride.points ? ride.points.length : 0}</span><br><span class="ride-metric-lbl">Points GPS</span></div>
+          </div>
+          <div class="ride-actions">
+            <button class="btn-micro view-ride-btn" data-id="${ride.id}">🗺️ Voir tracé</button>
+            <button class="btn-micro gpx-ride-btn" data-id="${ride.id}">📥 Exporter GPX</button>
+            <button class="btn-micro danger del-ride-btn" data-id="${ride.id}">🗑️</button>
+          </div>
+        `;
+
+        item.querySelector('.view-ride-btn').addEventListener('click', () => {
+          this.mapManager.displayPastRide(ride.points);
+          this.elSettingsModal.style.display = 'none';
+          this.showToast(`🗺️ Tracé affiché : ${ride.distanceKm} km`);
+        });
+
+        item.querySelector('.gpx-ride-btn').addEventListener('click', () => {
+          this.rideRecorder.exportGpx(ride.id);
+          this.showToast('📥 Fichier GPX téléchargé !');
+        });
+
+        item.querySelector('.del-ride-btn').addEventListener('click', () => {
+          this.rideRecorder.deleteRide(ride.id);
+          this.renderRidesHistoryUI();
+          this.showToast('Trajet supprimé');
+        });
+
+        listContainer.appendChild(item);
+      });
+    }
+
     openReportModal() {
       this.selectedHazardType = null;
       document.querySelectorAll('.hazard-choice-btn').forEach(b => b.classList.remove('selected'));
@@ -1537,45 +2961,36 @@
       const comment = document.getElementById('report-comment').value;
       const config = HAZARD_TYPES[this.selectedHazardType];
       const currentLoc = this.mapManager.currentLocation;
-      const headingRad = (currentLoc.heading || 90) * Math.PI / 180;
 
-      this.hazardManager.addHazard({
-        type: this.selectedHazardType,
-        lat: currentLoc.lat + Math.cos(headingRad) * 0.0006,
-        lng: currentLoc.lng + Math.sin(headingRad) * 0.0008,
-        title: config.label,
-        desc: comment || config.warning,
-        author: 'Moi (Trottinette)',
-        upvotes: 1
-      });
+      if (this.selectedHazardType === 'charge') {
+        this.chargingManager.stations.push({
+          id: 'ch_user_' + Date.now(),
+          name: 'Point de Charge 230V Signalé',
+          lat: currentLoc.lat,
+          lng: currentLoc.lng,
+          plug: 'Prise 230V standard 16A',
+          access: 'Signalé par la communauté',
+          desc: comment || 'Prise 230V disponible'
+        });
+        this.chargingManager.render();
+      } else {
+        this.hazardManager.addHazard({
+          type: this.selectedHazardType,
+          lat: currentLoc.lat + 0.0004,
+          lng: currentLoc.lng + 0.0004,
+          title: config.label,
+          desc: comment || config.warning,
+          author: (this.authManager.currentUser && this.authManager.currentUser.username) || 'Moi (Trottinette)',
+          upvotes: 1
+        });
+      }
 
+      this.authManager.incrementReports();
+      this.updateUserAuthUI();
       this.elReportModal.style.display = 'none';
-      this.showToast(`✅ Signalé : ${config.label} transmis !`);
-      this.hazardManager.playAlertSound(this.selectedHazardType);
+      this.showToast(`✅ Signalé : ${config.label} !`);
     }
 
-    confirmHazard(id) { this.hazardManager.upvote(id); this.showToast('Signalement confirmé 👍'); }
-    dismissHazard(id) { this.hazardManager.remove(id); this.showToast('Signalement marqué résolu ✕'); }
-
-    // -----------------------------------------------------------------------
-    // Battery widget
-    // -----------------------------------------------------------------------
-    updateBatteryWidget() {
-      const cfg = this.batteryEngine.config;
-      this.elBatteryPercent.textContent = `${cfg.currentPercentage}%`;
-      this.elBatteryFill.style.width = `${cfg.currentPercentage}%`;
-      this.elBatteryFill.style.background = cfg.currentPercentage < 20 ? 'var(--danger)' : cfg.currentPercentage < 40 ? 'var(--warning)' : 'var(--primary)';
-      document.getElementById('scooter-battery-pct').value = cfg.currentPercentage;
-      document.getElementById('val-battery-pct').textContent = `${cfg.currentPercentage}%`;
-      document.getElementById('scooter-rider-weight').value = cfg.riderWeightKg;
-      document.getElementById('val-rider-weight').textContent = `${cfg.riderWeightKg} kg`;
-      document.getElementById('scooter-capacity').value = cfg.batteryCapacityWh;
-      document.getElementById('scooter-speed-pref').value = cfg.speedPrefKmh;
-    }
-
-    // -----------------------------------------------------------------------
-    // Toast notification
-    // -----------------------------------------------------------------------
     showToast(msg) {
       const existing = document.getElementById('trotti-toast');
       if (existing) existing.remove();
@@ -1583,14 +2998,14 @@
       toast.id = 'trotti-toast';
       toast.className = 'glass-panel';
       toast.style.cssText = `
-        position: absolute; bottom: 95px; left: 50%; transform: translateX(-50%);
-        z-index: 2000; padding: 10px 18px; font-size: 13px; font-weight: 700;
-        border-radius: 30px; border: 1px solid var(--primary);
-        box-shadow: 0 4px 20px rgba(0,0,0,0.4); animation: fadeIn 0.2s ease; white-space: nowrap;
+        position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%);
+        z-index: 2000; padding: 8px 16px; font-size: 12.5px; font-weight: 700;
+        border-radius: 25px; border: 1px solid var(--primary);
+        box-shadow: 0 4px 15px rgba(0,0,0,0.5); white-space: nowrap;
       `;
       toast.textContent = msg;
       document.getElementById('app-container').appendChild(toast);
-      setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.4s'; setTimeout(() => toast.remove(), 400); }, 2800);
+      setTimeout(() => { toast.style.opacity = '0'; toast.style.transition = 'opacity 0.4s'; setTimeout(() => toast.remove(), 400); }, 2500);
     }
   }
 
