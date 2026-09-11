@@ -671,6 +671,9 @@
     initEvents() {
       if (window.DeviceOrientationEvent) {
         window.addEventListener('deviceorientation', (e) => {
+          // In head-up navigation mode, heading is driven strictly by forward motion and route vector,
+          // never by random phone shake/tilt on handlebars or in pockets
+          if (document.body.classList.contains('nav-head-up-active')) return;
           let heading = null;
           if (e.webkitCompassHeading) {
             heading = e.webkitCompassHeading;
@@ -704,24 +707,24 @@
     }
 
     applyOrientation() {
+      const isNavHeadUp = document.body.classList.contains('nav-head-up-active');
+      const isCourseUp = this.mode === 'course-up' || isNavHeadUp;
       const compassBtn = document.getElementById('btn-compass-mode');
       const compassIcon = document.getElementById('compass-icon');
       const mapContainer = document.getElementById('map');
 
-      if (this.mode === 'course-up') {
+      if (isCourseUp) {
         if (compassBtn) compassBtn.classList.add('active-course-up');
         if (compassIcon) compassIcon.style.transform = `rotate(${-this.currentHeading}deg)`;
         if (mapContainer) {
           mapContainer.style.transform = `rotate(${-this.currentHeading}deg)`;
           mapContainer.style.transformOrigin = '50% 50%';
-          mapContainer.style.transition = 'transform 0.3s ease-out';
         }
       } else {
         if (compassBtn) compassBtn.classList.remove('active-course-up');
         if (compassIcon) compassIcon.style.transform = 'rotate(0deg)';
-        if (mapContainer) {
+        if (mapContainer && !isNavHeadUp) {
           mapContainer.style.transform = 'none';
-          mapContainer.style.transition = 'transform 0.3s ease-out';
         }
       }
     }
@@ -1818,8 +1821,22 @@
         .addTo(this.map);
       L.control.zoom({ position: 'topleft' }).addTo(this.map);
 
+      let autoRecenterTimer = null;
       this.map.on('dragstart', () => {
         this.setAutoFollow(false);
+        if (autoRecenterTimer) clearTimeout(autoRecenterTimer);
+      });
+
+      this.map.on('dragend', () => {
+        if (document.body.classList.contains('nav-head-up-active')) {
+          if (autoRecenterTimer) clearTimeout(autoRecenterTimer);
+          autoRecenterTimer = setTimeout(() => {
+            this.setAutoFollow(true);
+            if (this.currentLocation) {
+              this.recenter(18);
+            }
+          }, 4000);
+        }
       });
 
       // Tile Layer Factory with reliable, fast public CDNs without API keys
@@ -2014,15 +2031,19 @@
         if (compassIcon) compassIcon.style.transform = `rotate(${-heading}deg)`;
 
         if (this.isAutoFollowing && this.map) {
-          // Look-ahead camera positioning: offset ~50m along heading vector
-          const rad = (heading * Math.PI) / 180;
-          const lookAhead = 0.00045; // ~50m
-          const targetLat = lat + Math.cos(rad) * lookAhead;
-          const targetLng = lng + Math.sin(rad) * (lookAhead / Math.cos(lat * Math.PI / 180));
-          this.map.panTo([targetLat, targetLng], { animate: true, duration: 0.5, easeLinearity: 0.2 });
+          // Centered directly on [lat, lng] so the scooter stays the exact focal and rotation pivot point
+          const curCenter = this.map.getCenter();
+          const distM = curCenter ? this.map.distance(curCenter, [lat, lng]) : 10;
+          if (distM > 0.6) {
+            this.map.panTo([lat, lng], { animate: true, duration: 0.35, easeLinearity: 0.4 });
+          }
         }
       } else if (this.isAutoFollowing && this.map) {
-        this.map.panTo([lat, lng], { animate: true, duration: 0.6, easeLinearity: 0.25 });
+        const curCenter = this.map.getCenter();
+        const distM = curCenter ? this.map.distance(curCenter, [lat, lng]) : 10;
+        if (distM > 0.6) {
+          this.map.panTo([lat, lng], { animate: true, duration: 0.35, easeLinearity: 0.4 });
+        }
       }
     }
 
@@ -2514,6 +2535,9 @@
 
       // Enable Waze style Head-Up perspective
       document.body.classList.add('nav-head-up-active');
+      if (this.compassManager) {
+        this.compassManager.mode = 'course-up';
+      }
       if (this.mapManager && this.mapManager.map) {
         this.mapManager.setAutoFollow(true);
         this.mapManager.map.setZoom(18);
@@ -2546,10 +2570,33 @@
         }
 
         const currentPt = coords[this.simIndex];
-        const nextPt = coords[Math.min(coords.length - 1, this.simIndex + 1)];
-        const heading = this.calculateHeading(currentPt[0], currentPt[1], nextPt[0], nextPt[1]);
+
+        // Scan ahead for the next distinct point at least 5 meters away to compute rock-solid forward heading
+        let nextPt = coords[Math.min(coords.length - 1, this.simIndex + 1)];
+        for (let k = this.simIndex + 1; k < Math.min(coords.length, this.simIndex + 8); k++) {
+          if (this.calculateDistance(currentPt[0], currentPt[1], coords[k][0], coords[k][1]) > 0.005) {
+            nextPt = coords[k];
+            break;
+          }
+        }
+
+        let targetHeading = this.calculateHeading(currentPt[0], currentPt[1], nextPt[0], nextPt[1]);
+        if (targetHeading === undefined || isNaN(targetHeading)) {
+          targetHeading = this.currentSimHeading || 0;
+        }
+
+        // Smooth angular transition to prevent erratic map flipping
+        if (this.currentSimHeading === undefined) {
+          this.currentSimHeading = targetHeading;
+        } else {
+          let diff = (targetHeading - this.currentSimHeading + 180) % 360 - 180;
+          if (diff < -180) diff += 360;
+          this.currentSimHeading = (this.currentSimHeading + diff * 0.35 + 360) % 360;
+        }
+
+        const heading = Math.round(this.currentSimHeading);
         const baseSpeed = this.batteryEngine.config.speedPrefKmh || 25;
-        const speed = Math.round(baseSpeed * (0.92 + Math.random() * 0.12));
+        const speed = Math.round(baseSpeed * (0.95 + Math.random() * 0.08));
 
         this.mapManager.updateScooterPosition(currentPt[0], currentPt[1], heading, speed);
         if (this.compassManager) {
@@ -2632,7 +2679,14 @@
       if (!this.isNavigating || this.isSimulated) return;
       const { latitude, longitude, speed, heading, altitude } = coords;
       const speedKmh = Math.round((speed || 0) * 3.6);
-      const currentHead = heading || 0;
+
+      // Filter GPS heading jitter: only accept new heading if moving (> 3 km/h) and heading is valid
+      let currentHead = this.currentHeading !== undefined ? this.currentHeading : (heading || 0);
+      if (heading !== null && !isNaN(heading) && speedKmh >= 3) {
+        currentHead = Math.round(heading);
+        this.currentHeading = currentHead;
+      }
+
       this.mapManager.updateScooterPosition(latitude, longitude, currentHead, speedKmh);
       if (this.compassManager) {
         this.compassManager.setHeading(currentHead);
@@ -2695,13 +2749,9 @@
 
     startRealGpsTracking() {
       // The app's continuous GPS watch feeds handleGpsLocationUpdate automatically.
-      // Standalone fallback:
-      if (!this.watchId && navigator.geolocation) {
-        this.watchId = navigator.geolocation.watchPosition(
-          pos => this.handleGpsLocationUpdate(pos.coords),
-          err => console.warn('GPS navigation fallback notice:', err),
-          { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 }
-        );
+      if (this.watchId) {
+        try { navigator.geolocation.clearWatch(this.watchId); } catch(e) {}
+        this.watchId = null;
       }
     }
 
@@ -2718,6 +2768,9 @@
 
       // Reset Head-Up view
       document.body.classList.remove('nav-head-up-active');
+      if (this.compassManager) {
+        this.compassManager.mode = 'north-up';
+      }
       const mapEl = document.getElementById('map');
       if (mapEl) {
         mapEl.style.transform = 'none';
@@ -2749,12 +2802,17 @@
     }
 
     calculateHeading(lat1, lon1, lat2, lon2) {
+      if (Math.abs(lat1 - lat2) < 0.00003 && Math.abs(lon1 - lon2) < 0.00003) {
+        return this.lastHeading !== undefined ? this.lastHeading : 0;
+      }
       const dLon = (lon2 - lon1) * Math.PI / 180;
       const y = Math.sin(dLon) * Math.cos(lat2 * Math.PI / 180);
       const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
                 Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos(dLon);
       const brng = Math.atan2(y, x) * 180 / Math.PI;
-      return (brng + 360) % 360;
+      const heading = (brng + 360) % 360;
+      this.lastHeading = heading;
+      return heading;
     }
   }
 
@@ -3201,8 +3259,19 @@
           }));
         } catch (e) {}
 
+        // 1. If simulation is running, ignore real GPS so it doesn't fight the simulation!
+        if (this.navigationEngine && this.navigationEngine.isNavigating && this.navigationEngine.isSimulated) {
+          return;
+        }
+
         this.selectedStartCoords = { lat: latitude, lng: longitude };
-        this.mapManager.updateScooterPosition(latitude, longitude, currentHead, speedKmh);
+
+        // 2. In active real navigation, delegate cleanly to handleGpsLocationUpdate (no double updates)
+        if (this.navigationEngine && this.navigationEngine.isNavigating && !this.navigationEngine.isSimulated) {
+          this.navigationEngine.handleGpsLocationUpdate(pos.coords);
+        } else {
+          this.mapManager.updateScooterPosition(latitude, longitude, currentHead, speedKmh);
+        }
 
         if (!this.hasInitialGpsFixed) {
           this.hasInitialGpsFixed = true;
@@ -3212,11 +3281,6 @@
           this.chargingManager.generateNearbyStations(latitude, longitude);
           const weather = await this.weatherEngine.fetchWeather(latitude, longitude);
           this.updateWeatherUI(weather);
-        }
-
-        // Delegate to active real GPS navigation if currently running
-        if (this.navigationEngine && this.navigationEngine.isNavigating && !this.navigationEngine.isSimulated) {
-          this.navigationEngine.handleGpsLocationUpdate(pos.coords);
         }
       };
 
