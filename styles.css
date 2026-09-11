@@ -2272,10 +2272,10 @@ body, html {
 /* Waze / Maps Head-Up (Course-Up) Navigation View */
 body.nav-head-up-active #map {
   position: absolute !important;
-  width: 170vw !important;
-  height: 170vh !important;
-  top: -35vh !important;
-  left: -35vw !important;
+  width: 240vw !important;
+  height: 240vh !important;
+  top: -56vh !important;
+  left: -70vw !important;
   transition: transform 0.35s ease-out !important;
 }
 

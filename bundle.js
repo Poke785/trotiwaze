@@ -2016,8 +2016,9 @@
         this.scooterMarker.setLatLng([lat, lng]);
         const pinEl = document.getElementById('trotti-scooter-pin');
         if (pinEl) {
-          // In head-up navigation, the map rotates to align with heading, so the scooter pin always points straight up (0deg)
-          pinEl.style.transform = isHeadUp ? 'rotate(0deg)' : `rotate(${heading}deg)`;
+          // In head-up navigation, the map container rotates by -heading.
+          // Rotating pinEl by +heading counter-balances the map container rotation, ensuring the pin and its forward beam point exactly straight UP (0deg in screen space) along the road ahead.
+          pinEl.style.transform = `rotate(${heading}deg)`;
         }
       }
 
@@ -2049,10 +2050,12 @@
 
     recenter(zoom = 16) {
       this.setAutoFollow(true);
+      const isHeadUp = document.body.classList.contains('nav-head-up-active');
+      const targetZoom = isHeadUp ? 19 : zoom;
       if (this.currentLocation) {
-        this.map.setView([this.currentLocation.lat, this.currentLocation.lng], zoom, {
+        this.map.setView([this.currentLocation.lat, this.currentLocation.lng], targetZoom, {
           animate: true,
-          pan: { duration: 0.5, easeLinearity: 0.25 }
+          pan: { duration: 0.4, easeLinearity: 0.25 }
         });
       }
       this.map.invalidateSize();
@@ -2538,11 +2541,72 @@
       if (this.compassManager) {
         this.compassManager.mode = 'course-up';
       }
+
+      // Compute initial departure coordinates and forward road heading
+      const coords = route && route.coordinates && route.coordinates.length > 0 ? route.coordinates : null;
+      let startLat = 48.8531;
+      let startLng = 2.3698;
+      let initialHeading = 0;
+
+      if (coords && coords.length > 0) {
+        startLat = coords[0][0];
+        startLng = coords[0][1];
+
+        // Scan ahead 5-8 meters along the route to compute exact initial road departure heading
+        let pNext = coords[Math.min(coords.length - 1, 1)];
+        for (let k = 1; k < Math.min(coords.length, 8); k++) {
+          if (this.calculateDistance(startLat, startLng, coords[k][0], coords[k][1]) > 0.005) {
+            pNext = coords[k];
+            break;
+          }
+        }
+        initialHeading = this.calculateHeading(startLat, startLng, pNext[0], pNext[1]) || 0;
+      } else if (this.mapManager && this.mapManager.currentLocation) {
+        startLat = this.mapManager.currentLocation.lat;
+        startLng = this.mapManager.currentLocation.lng;
+        initialHeading = this.mapManager.currentLocation.heading || 0;
+      }
+
+      this.currentSimHeading = initialHeading;
+      this.currentHeading = initialHeading;
+
+      // Instantly position the scooter on us and snap the camera with immersive close zoom 19
       if (this.mapManager && this.mapManager.map) {
         this.mapManager.setAutoFollow(true);
-        this.mapManager.map.setZoom(18);
-        setTimeout(() => this.mapManager.map.invalidateSize(), 150);
+        this.mapManager.updateScooterPosition(startLat, startLng, initialHeading, 0);
+        this.mapManager.map.setView([startLat, startLng], 19, { animate: false });
+        setTimeout(() => this.mapManager.map.invalidateSize(), 120);
       }
+
+      // Pre-feed Turn-By-Turn HUD with first step immediately
+      if (route.steps && route.steps.length > 0 && this.onStepUpdate) {
+        const firstStep = route.steps[0];
+        this.onStepUpdate({
+          distanceMeters: firstStep.distanceMeters || 100,
+          street: firstStep.street || 'Prendre la route',
+          instruction: firstStep.instruction || 'Prendre la route',
+          modifier: firstStep.modifier || 'straight'
+        });
+      }
+
+      // Initial trip telemetry update (arrival time ETA, duration, distance, battery)
+      if (this.onTripUpdate) {
+        const batteryStatus = this.batteryEngine.estimateTrip(route.distanceKm, route.elevationGainM || 5);
+        this.lastReportedTrip = {
+          remainingDistKm: route.distanceKm,
+          remainingMin: route.durationMin,
+          batteryStatus
+        };
+        this.onTripUpdate(this.lastReportedTrip);
+      }
+
+      // Heartbeat timer every 10s to keep clock ETA perfectly updated even when stopped
+      if (this.etaHeartbeat) clearInterval(this.etaHeartbeat);
+      this.etaHeartbeat = setInterval(() => {
+        if (this.isNavigating && this.lastReportedTrip && this.onTripUpdate) {
+          this.onTripUpdate(this.lastReportedTrip);
+        }
+      }, 10000);
 
       if (this.voiceEngine) {
         this.voiceEngine.speak(`Départ. Suivez la route sur ${route.distanceKm} kilomètres.`, 'turn');
@@ -2585,13 +2649,14 @@
           targetHeading = this.currentSimHeading || 0;
         }
 
-        // Smooth angular transition to prevent erratic map flipping
+        // Smooth angular transition: responsive on turns so the road ahead stays aligned in front
         if (this.currentSimHeading === undefined) {
           this.currentSimHeading = targetHeading;
         } else {
           let diff = (targetHeading - this.currentSimHeading + 180) % 360 - 180;
           if (diff < -180) diff += 360;
-          this.currentSimHeading = (this.currentSimHeading + diff * 0.35 + 360) % 360;
+          const smoothFactor = Math.abs(diff) > 25 ? 0.65 : 0.45;
+          this.currentSimHeading = (this.currentSimHeading + diff * smoothFactor + 360) % 360;
         }
 
         const heading = Math.round(this.currentSimHeading);
@@ -2680,11 +2745,31 @@
       const { latitude, longitude, speed, heading, altitude } = coords;
       const speedKmh = Math.round((speed || 0) * 3.6);
 
-      // Filter GPS heading jitter: only accept new heading if moving (> 3 km/h) and heading is valid
+      // Filter GPS heading jitter: accept GPS heading if moving, or lock to the upcoming road segment if stationary
       let currentHead = this.currentHeading !== undefined ? this.currentHeading : (heading || 0);
       if (heading !== null && !isNaN(heading) && speedKmh >= 3) {
         currentHead = Math.round(heading);
         this.currentHeading = currentHead;
+      } else if (this.activeRoute && this.activeRoute.coordinates && this.activeRoute.coordinates.length > 0) {
+        // When stopped at light or starting, keep the road oriented straight ahead
+        const coordsList = this.activeRoute.coordinates;
+        let closestIdx = 0;
+        let minDist = Infinity;
+        for (let i = 0; i < coordsList.length; i++) {
+          const d = this.calculateDistance(latitude, longitude, coordsList[i][0], coordsList[i][1]);
+          if (d < minDist) {
+            minDist = d;
+            closestIdx = i;
+          }
+        }
+        const nextIdx = Math.min(coordsList.length - 1, closestIdx + 1);
+        if (nextIdx > closestIdx) {
+          const roadHead = this.calculateHeading(coordsList[closestIdx][0], coordsList[closestIdx][1], coordsList[nextIdx][0], coordsList[nextIdx][1]);
+          if (roadHead !== undefined && !isNaN(roadHead)) {
+            currentHead = Math.round(roadHead);
+            this.currentHeading = currentHead;
+          }
+        }
       }
 
       this.mapManager.updateScooterPosition(latitude, longitude, currentHead, speedKmh);
@@ -2765,6 +2850,10 @@
       this.isPaused = false;
       if (this.simInterval) clearInterval(this.simInterval);
       if (this.watchId) navigator.geolocation.clearWatch(this.watchId);
+      if (this.etaHeartbeat) {
+        clearInterval(this.etaHeartbeat);
+        this.etaHeartbeat = null;
+      }
 
       // Reset Head-Up view
       document.body.classList.remove('nav-head-up-active');
@@ -4951,6 +5040,14 @@
         elevSummary.textContent = `${r.title} : +${r.elevationGainM}m montée (max ${r.maxSlopePct}%) • Conso ~${batt.whUsed} Wh • ${r.praticability}`;
       }
 
+      const now = new Date();
+      const etaDate = new Date(now.getTime() + (r.durationMin || 0) * 60000);
+      const hh = String(etaDate.getHours()).padStart(2, '0');
+      const mm = String(etaDate.getMinutes()).padStart(2, '0');
+      if (this.elHudEta) this.elHudEta.textContent = `${hh}:${mm}`;
+      if (this.elHudTimeRem) this.elHudTimeRem.textContent = `${r.durationMin} min`;
+      if (this.elHudDistRem) this.elHudDistRem.textContent = `${r.distanceKm} km`;
+
       if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-${batt.consumedPct}%`;
       if (this.elBatteryArrival) this.elBatteryArrival.textContent = `⚡ Conso : ${batt.whUsed} Wh (🔌 ~${batt.rechargeTimeMin}m)`;
       if (this.elBatteryFill) this.elBatteryFill.style.width = `${Math.min(100, Math.max(12, batt.consumedPct))}%`;
@@ -4996,6 +5093,11 @@
       this.handleSpeedUpdate(0);
       if (this.elEndInput.value.trim().length > 0) {
         if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'flex';
+        this.applySelectedRoute();
+      } else {
+        if (this.elHudEta) this.elHudEta.textContent = '--:--';
+        if (this.elHudTimeRem) this.elHudTimeRem.textContent = '-- min';
+        if (this.elHudDistRem) this.elHudDistRem.textContent = '-- km';
       }
     }
 
@@ -5069,11 +5171,25 @@
     }
 
     handleTripUpdate(trip) {
-      this.elHudTimeRem.textContent = `${trip.remainingMin} min`;
-      this.elHudDistRem.textContent = `${trip.remainingDistKm} km`;
+      if (!trip) return;
+      const remMin = trip.remainingMin !== undefined ? trip.remainingMin : 0;
+      const remDist = trip.remainingDistKm !== undefined ? trip.remainingDistKm : '0.0';
+
+      if (this.elHudTimeRem) this.elHudTimeRem.textContent = `${remMin} min`;
+      if (this.elHudDistRem) this.elHudDistRem.textContent = `${remDist} km`;
+
+      // Real-time Arrival Clock Time (ETA)
+      const now = new Date();
+      const etaDate = new Date(now.getTime() + remMin * 60000);
+      const hh = String(etaDate.getHours()).padStart(2, '0');
+      const mm = String(etaDate.getMinutes()).padStart(2, '0');
+      if (this.elHudEta) {
+        this.elHudEta.textContent = `${hh}:${mm}`;
+      }
+
       if (trip.batteryStatus) {
-        this.elBatteryPercent.textContent = `-${trip.batteryStatus.consumedPct || 0}%`;
-        this.elBatteryArrival.textContent = `⚡ Conso : ${trip.batteryStatus.whUsed || 0} Wh`;
+        if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-${trip.batteryStatus.consumedPct || 0}%`;
+        if (this.elBatteryArrival) this.elBatteryArrival.textContent = `⚡ Conso : ${trip.batteryStatus.whUsed || 0} Wh`;
       }
     }
 
