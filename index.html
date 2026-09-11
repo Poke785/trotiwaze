@@ -25,14 +25,15 @@
     <!-- Map Canvas (Full 2D Smooth Leaflet) -->
     <div id="map"></div>
 
-    <!-- CyclOSM / Map Legend & Charging Points Toggle Badge -->
-    <div id="cyclosm-badge" class="glass-panel">
-      <span class="legend-dot green"></span> <span id="btn-legend-cycleways" style="cursor: pointer; font-weight: 700;" title="Explorer les pistes 100% sécurisées">Piste protégée</span>
-      <span class="legend-dot blue"></span> <span>Bande</span>
-      <label class="legend-charge-toggle" title="Afficher les bornes de recharge 230V">
+    <!-- 230V Charging Points Floating Toggle Badge -->
+    <div id="cyclosm-badge" class="glass-panel" style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 20px;">
+      <label class="legend-charge-toggle" title="Afficher ou masquer les prises de recharge 230V sur la carte" style="display: flex; align-items: center; gap: 5px; cursor: pointer; border: none; padding: 0;">
         <input type="checkbox" id="toggle-charging-stations" checked>
-        <span class="charge-dot">⚡</span> <span>230V</span>
+        <span class="charge-dot" style="font-size: 13px;">⚡</span> <span style="font-weight: 700; color: #fbbf24; font-size: 11px;">Prises 230V</span>
       </label>
+      <button type="button" id="btn-quick-find-charge-badge" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; border-radius: 12px; font-size: 10.5px; font-weight: 700; padding: 2px 7px; cursor: pointer;" title="Trouver la prise 230V la plus proche">
+        📍 Plus proche
+      </button>
     </div>
 
     <!-- Top Floating Search & Itinerary Panel -->
@@ -56,19 +57,17 @@
             👥 <span id="radar-user-count">6</span>
           </div>
           
-          <!-- Modern Responsive Account Pill Button -->
-          <button id="btn-open-auth" class="auth-account-pill" title="Mon Compte / Connexion" aria-label="Compte">
-            <span class="avatar-ring-container">
-              <span id="header-avatar-badge" class="header-avatar-icon">👤</span>
-              <span class="online-pulse-dot" id="auth-online-dot" style="display:none;"></span>
-            </span>
-            <span id="header-auth-label" class="auth-pill-label">Compte</span>
+          <!-- Prominent Settings Button -->
+          <button id="btn-open-settings" class="btn-header-settings" title="Paramètres & Préférences dépliants" aria-label="Paramètres">
+            ⚙️ <span class="settings-btn-text">Réglages</span>
           </button>
 
-          <!-- Unified Settings Button -->
-          <button id="btn-open-settings" class="icon-btn settings-btn" title="Paramètres & Préférences dépliants" aria-label="Paramètres">
-            ⚙️
+          <!-- Discreet Compact Account Avatar Button -->
+          <button id="btn-open-auth" class="btn-header-account-mini" title="Mon Compte / Connexion" aria-label="Compte">
+            <span id="header-avatar-badge">👤</span>
+            <span class="online-pulse-dot" id="auth-online-dot" style="display:none;"></span>
           </button>
+
           <button id="btn-toggle-theme" class="icon-btn" title="Changer le thème" aria-label="Changer le thème">🌙</button>
           <button id="btn-toggle-panel-fold" class="icon-btn panel-fold-btn" title="Replier le panneau">▲</button>
         </div>
@@ -108,8 +107,8 @@
       <div class="quick-chips">
         <button class="chip fav-chip" data-dest="Domicile" data-fav="home">🏠 Domicile</button>
         <button class="chip fav-chip" data-dest="Travail" data-fav="work">💼 Travail</button>
-        <button class="chip fav-chip-cycleway" id="btn-quick-cycleways" title="Voir les pistes 100% sécurisées">🛡️ Pistes Sûres</button>
-        <button class="chip fav-chip-charge" id="btn-quick-find-charge">⚡ Prise 230V</button>
+        <button class="chip fav-chip-recenter" id="btn-quick-gps-fix" title="Revenir à ma position GPS actuelle">📍 Ma position</button>
+        <button class="chip fav-chip-charge" id="btn-quick-find-charge" title="Rechercher une prise 230V">⚡ Prise 230V</button>
         <button class="chip fav-chip-add" id="btn-quick-record-trigger">🔴 Enregistrer</button>
       </div>
 
@@ -229,11 +228,11 @@
         </svg>
       </div>
       <div class="nav-instruction-content">
-        <div class="nav-distance" id="nav-step-distance">Dans 120 m</div>
-        <div class="nav-street" id="nav-step-street">Tournez à droite sur la Piste Cyclable</div>
-        <div class="nav-safety-badge" id="nav-step-type">🛡️ Piste bidirectionnelle protégée</div>
+        <div class="nav-distance" id="nav-step-distance">Prenez la route</div>
+        <div class="nav-street" id="nav-step-street">Suivre l'itinéraire</div>
       </div>
       <div class="nav-top-controls">
+        <button id="btn-nav-map-style" class="icon-btn-square" title="Changer le style de carte (Rues GPS, Satellite, CyclOSM, Nuit...)">🗺️</button>
         <button id="btn-toggle-voice" class="icon-btn-square" title="Activer / Désactiver la voix">🔊</button>
         <button id="btn-stop-nav" class="icon-btn-square danger" title="Arrêter la navigation">✕</button>
       </div>
@@ -322,6 +321,11 @@
       <!-- Compass / Map Rotation Heading Button (North-Up / Course-Up) -->
       <button id="btn-compass-mode" class="fab-btn compass-btn" title="Boussole & Rotation de la Carte (Nord / Cap)">
         <span id="compass-icon">🧭</span>
+      </button>
+
+      <!-- Quick Map Style Switcher (Toujours accessible, y compris en cours de trajet) -->
+      <button id="btn-floating-map-switch" class="fab-btn map-switch-fab" title="Changer de carte à tout moment (Rues GPS, Satellite, CyclOSM, Nuit...)">
+        🗺️
       </button>
 
       <!-- Recenter Button with Auto-Follow GPS -->
@@ -700,27 +704,27 @@
             </button>
 
             <div class="accordion-body" id="acc-body-maps">
-              <!-- Verified Cycleways Highlight Toggle -->
+              <!-- 230V Charging Stations Toggle -->
               <label class="filter-toggle-card highlight-cycleways" style="margin-bottom: 12px;">
                 <div class="filter-card-left">
-                  <span class="filter-card-icon">🚲</span>
+                  <span class="filter-card-icon">⚡</span>
                   <div>
-                    <div class="filter-card-title">Pistes Cyclables Vérifiées</div>
-                    <div class="filter-card-desc">Met en avant uniquement les infrastructures cyclables officielles et protégées</div>
+                    <div class="filter-card-title">Prises de Recharge 230V</div>
+                    <div class="filter-card-desc">Affiche les prises secteur 230V compatibles avec votre chargeur trottinette</div>
                   </div>
                 </div>
-                <input type="checkbox" id="toggle-verified-cycleways" checked>
+                <input type="checkbox" id="filter-show-charges" checked>
                 <span class="toggle-slider"></span>
               </label>
 
               <p class="tab-subtitle">Choisissez le style de carte :</p>
               <div class="map-layers-grid">
-                <!-- Layer 1: Style Cartoon Dessin Animé HD -->
-                <div class="map-layer-option active" data-layer-id="waze">
-                  <div class="layer-preview waze-preview">🎨</div>
+                <!-- Layer 1: Esri Streets GPS (Défaut Recommandé) -->
+                <div class="map-layer-option active" data-layer-id="streets">
+                  <div class="layer-preview esri-preview">🏙️</div>
                   <div class="layer-info">
-                    <div class="layer-name">Style Cartoon Dessin Animé HD (Recommandé)</div>
-                    <div class="layer-desc">Rendu doux pastel, routes bien contrastées & parcs arrondis sans pub</div>
+                    <div class="layer-name">Style GPS Urbain (Esri Streets - Recommandé)</div>
+                    <div class="layer-desc">Contraste élevé, lisibilité maximale des routes et des rues</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>
@@ -745,17 +749,27 @@
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 4: Esri Streets GPS -->
-                <div class="map-layer-option" data-layer-id="streets">
-                  <div class="layer-preview esri-preview">🛴</div>
+                <!-- Layer 4: Vue Satellite Réelle HD -->
+                <div class="map-layer-option" data-layer-id="satellite">
+                  <div class="layer-preview sat-preview">🛰️</div>
                   <div class="layer-info">
-                    <div class="layer-name">Style GPS Urbain (Esri Streets)</div>
-                    <div class="layer-desc">Contraste élevé et guidage routier clair</div>
+                    <div class="layer-name">Vue Satellite Réelle HD (Esri)</div>
+                    <div class="layer-desc">Photographies aériennes haute résolution</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 5: OpenTopoMap Relief & Pentes -->
+                <!-- Layer 5: Mode Nuit Épuré -->
+                <div class="map-layer-option" data-layer-id="night">
+                  <div class="layer-preview night-preview">🌙</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Mode Nuit Épuré (Esri Dark)</div>
+                    <div class="layer-desc">Confort visuel nocturne, fond sombre reposant et haute lisibilité</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 6: OpenTopoMap Relief & Pentes -->
                 <div class="map-layer-option" data-layer-id="opentopo">
                   <div class="layer-preview topo-preview">🏔️</div>
                   <div class="layer-info">
@@ -765,32 +779,12 @@
                   <span class="layer-check">✓</span>
                 </div>
 
-                <!-- Layer 6: IGN Géoportail -->
+                <!-- Layer 7: IGN Géoportail -->
                 <div class="map-layer-option" data-layer-id="ign">
                   <div class="layer-preview ign-preview">🏛️</div>
                   <div class="layer-info">
                     <div class="layer-name">Plan IGN France Officiel</div>
                     <div class="layer-desc">Cartographie nationale de référence (GEOPF)</div>
-                  </div>
-                  <span class="layer-check">✓</span>
-                </div>
-
-                <!-- Layer 7: Vue Satellite Réelle HD -->
-                <div class="map-layer-option" data-layer-id="satellite">
-                  <div class="layer-preview sat-preview">🛰️</div>
-                  <div class="layer-info">
-                    <div class="layer-name">Vue Satellite Réelle HD</div>
-                    <div class="layer-desc">Photographies aériennes haute résolution</div>
-                  </div>
-                  <span class="layer-check">✓</span>
-                </div>
-
-                <!-- Layer 8: Mode Nuit OLED -->
-                <div class="map-layer-option" data-layer-id="night">
-                  <div class="layer-preview night-preview">🌙</div>
-                  <div class="layer-info">
-                    <div class="layer-name">Mode Nuit OLED</div>
-                    <div class="layer-desc">Confort visuel nocturne et économie batterie</div>
                   </div>
                   <span class="layer-check">✓</span>
                 </div>
@@ -1212,9 +1206,54 @@
         </div>
 
       </div>
-    </div>
+    </div> <!-- /#auth-modal properly closed -->
 
-  </div>
+    <!-- Quick Map Style Modal (Changement de carte en 1 clic à tout moment) -->
+    <div id="quick-map-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 380px;">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">🗺️ Changer le style de carte</div>
+            <div class="modal-subtitle">Basculer immédiatement sans interrompre le trajet</div>
+          </div>
+          <button id="btn-close-quick-map" class="icon-btn">✕</button>
+        </div>
+        <div class="quick-map-grid" style="padding: 14px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+          <button class="quick-map-tile active" data-map="streets">
+            <span class="map-tile-icon">🏙️</span>
+            <span class="map-tile-name">Rues Esri GPS</span>
+            <span class="map-tile-sub">Style Ville Urbain</span>
+          </button>
+          <button class="quick-map-tile" data-map="satellite">
+            <span class="map-tile-icon">🛰️</span>
+            <span class="map-tile-name">Satellite HD</span>
+            <span class="map-tile-sub">Vue Aérienne Esri</span>
+          </button>
+          <button class="quick-map-tile" data-map="cyclosm">
+            <span class="map-tile-icon">🚴</span>
+            <span class="map-tile-name">CyclOSM</span>
+            <span class="map-tile-sub">Pistes & Détails</span>
+          </button>
+          <button class="quick-map-tile" data-map="night">
+            <span class="map-tile-icon">🌙</span>
+            <span class="map-tile-name">Nuit Sombre</span>
+            <span class="map-tile-sub">Esri Dark Épuré</span>
+          </button>
+          <button class="quick-map-tile" data-map="osm">
+            <span class="map-tile-icon">🌐</span>
+            <span class="map-tile-name">OSM Standard</span>
+            <span class="map-tile-sub">Cartographie Libre</span>
+          </button>
+          <button class="quick-map-tile" data-map="opentopo">
+            <span class="map-tile-icon">🏔️</span>
+            <span class="map-tile-name">Relief Topo</span>
+            <span class="map-tile-sub">Dénivelé & Pentes</span>
+          </button>
+        </div>
+      </div>
+    </div> <!-- /#quick-map-modal properly closed -->
+
+  </div> <!-- /#app-container -->
 
   <!-- Scripts -->
   <script src="bundle.js"></script>
