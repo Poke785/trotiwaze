@@ -370,6 +370,10 @@
       return null;
     }
 
+    getScooterById(id) {
+      return this.scooters.find(s => s.id === id) || null;
+    }
+
     addScooter(data) {
       const id = 'scoot_' + Date.now();
       const newScoot = {
@@ -834,7 +838,7 @@
       this.catalog = [...NATIONWIDE_230V_CHARGING_CATALOG];
       this.stations = [...this.catalog.slice(0, 25)];
       this.markers = [];
-      this.isVisible = true;
+      this.isVisible = false; // Prises 230V mises de côté par défaut (restent activables ultérieurement)
       this.lastQueryCoords = null;
       this.isLoading = false;
     }
@@ -1057,6 +1061,39 @@
         const f = localStorage.getItem('trottiwaze_favs_v2');
         if (f) this.favorites = JSON.parse(f);
       } catch (e) {}
+
+      if (!Array.isArray(this.recents) || this.recents.length === 0) {
+        this.recents = [
+          {
+            mainText: 'Place de la Nation',
+            subText: 'Paris 11e/12e Arrondissement',
+            fullLabel: 'Place de la Nation, Paris',
+            lat: 48.8482,
+            lng: 2.3959,
+            type: 'history',
+            timestamp: Date.now() - 3600000
+          },
+          {
+            mainText: 'Tour Eiffel',
+            subText: 'Champ de Mars, Paris 7e Arrondissement',
+            fullLabel: 'Tour Eiffel, Champ de Mars, Paris',
+            lat: 48.8584,
+            lng: 2.2945,
+            type: 'history',
+            timestamp: Date.now() - 86400000
+          },
+          {
+            mainText: 'Place de la Bastille',
+            subText: 'Paris 4e/11e/12e Arrondissement',
+            fullLabel: 'Place de la Bastille, Paris',
+            lat: 48.8531,
+            lng: 2.3698,
+            type: 'history',
+            timestamp: Date.now() - 172800000
+          }
+        ];
+        this.save();
+      }
     }
 
     save() {
@@ -1078,7 +1115,7 @@
         type: item.type || 'history',
         timestamp: Date.now()
       });
-      if (this.recents.length > 8) this.recents.pop();
+      if (this.recents.length > 12) this.recents.pop();
       this.save();
     }
 
@@ -1116,6 +1153,43 @@
         const raw = localStorage.getItem('trottiwaze_saved_rides');
         if (raw) this.savedRides = JSON.parse(raw);
       } catch (e) {}
+
+      if (!Array.isArray(this.savedRides) || this.savedRides.length === 0) {
+        this.savedRides = [
+          {
+            id: 'ride_seed_1',
+            title: 'Châtelet ➔ Place de la Nation',
+            date: 'Hier à 18:30',
+            timestamp: Date.now() - 86400000,
+            distanceKm: 4.8,
+            durationSeconds: 940,
+            durationFormatted: '15m 40s',
+            avgSpeedKmh: 18.4,
+            maxSpeedKmh: 24.8,
+            points: [
+              { lat: 48.8584, lng: 2.3470, alt: 35, speed: 15, time: Date.now() - 86400000 },
+              { lat: 48.8531, lng: 2.3698, alt: 38, speed: 20, time: Date.now() - 86395000 },
+              { lat: 48.8482, lng: 2.3959, alt: 42, speed: 18, time: Date.now() - 86390000 }
+            ]
+          },
+          {
+            id: 'ride_seed_2',
+            title: 'Place de la Bastille ➔ Tour Eiffel',
+            date: 'Il y a 3 jours à 14:15',
+            timestamp: Date.now() - 259200000,
+            distanceKm: 6.2,
+            durationSeconds: 1320,
+            durationFormatted: '22m 00s',
+            avgSpeedKmh: 16.9,
+            maxSpeedKmh: 23.5,
+            points: [
+              { lat: 48.8531, lng: 2.3698, alt: 38, speed: 16, time: Date.now() - 259200000 },
+              { lat: 48.8584, lng: 2.2945, alt: 33, speed: 19, time: Date.now() - 259190000 }
+            ]
+          }
+        ];
+        this.saveRidesToStorage();
+      }
     }
 
     saveRidesToStorage() {
@@ -1153,6 +1227,11 @@
     resumeRecording() {
       this.isPaused = false;
       this.notifyUpdate();
+    }
+
+    addPoint(pt) {
+      if (!pt) return;
+      this.addGpsPoint(pt.lat, pt.lng, pt.speed || 0, pt.alt || 0);
     }
 
     addGpsPoint(lat, lng, speedKmh = 0, alt = 0) {
@@ -1821,33 +1900,161 @@
         .addTo(this.map);
       L.control.zoom({ position: 'topleft' }).addTo(this.map);
 
-      let autoRecenterTimer = null;
+      // Free Map Exploration with 10s Inactivity Auto-Recenter:
+      // When moving/exploring the map during navigation, auto-follow pauses and a 10s timer is armed.
+      // Every movement resets the 10s countdown. After 10s of silence, view recenters automatically on the scooter.
       this.map.on('dragstart', () => {
         this.setAutoFollow(false);
-        if (autoRecenterTimer) clearTimeout(autoRecenterTimer);
+        this.scheduleAutoRecenter(10000);
+      });
+      this.map.on('drag', () => {
+        this.scheduleAutoRecenter(10000);
+      });
+      this.map.on('dragend', () => {
+        this.scheduleAutoRecenter(10000);
       });
 
-      this.map.on('dragend', () => {
-        if (document.body.classList.contains('nav-head-up-active')) {
-          if (autoRecenterTimer) clearTimeout(autoRecenterTimer);
-          autoRecenterTimer = setTimeout(() => {
-            this.setAutoFollow(true);
-            if (this.currentLocation) {
-              this.recenter(18);
+      // Unified screen-aligned pan and scroll engine for navigation & computer trackpad/mouse
+      const setupNaturalScreenNavigation = () => {
+        const container = this.map.getContainer();
+        let isNavPointerDragging = false;
+        let lastScreenX = 0;
+        let lastScreenY = 0;
+
+        const getHeadingRad = () => {
+          const isNavHeadUp = document.body.classList.contains('nav-head-up-active');
+          const isCourseUp = (window.trottiApp && window.trottiApp.compassManager && window.trottiApp.compassManager.mode === 'course-up');
+          if (isNavHeadUp || isCourseUp) {
+            const heading = (window.trottiApp && window.trottiApp.mapManager && window.trottiApp.mapManager.currentLocation)
+              ? (window.trottiApp.mapManager.currentLocation.heading || 0)
+              : 0;
+            return (heading * Math.PI) / 180;
+          }
+          return 0;
+        };
+
+        // Pointer / Mouse / Touch Drag with screen-aligned direction
+        container.addEventListener('pointerdown', (e) => {
+          if (e.button !== undefined && e.button !== 0) return;
+          // Don't drag if clicking buttons, controls, or sheet handles
+          if (e.target && e.target.closest && (
+            e.target.closest('button') ||
+            e.target.closest('.leaflet-control') ||
+            e.target.closest('.floating-panel') ||
+            e.target.closest('.fab-btn') ||
+            e.target.closest('.nav-hud-instruction') ||
+            e.target.closest('.nav-cockpit-bar') ||
+            e.target.closest('#nav-route-drawer-tab') ||
+            e.target.closest('#nav-route-drawer')
+          )) {
+            return;
+          }
+          const isNavHeadUp = document.body.classList.contains('nav-head-up-active');
+          if (isNavHeadUp) {
+            isNavPointerDragging = true;
+            lastScreenX = e.clientX;
+            lastScreenY = e.clientY;
+            this.setAutoFollow(false);
+            this.scheduleAutoRecenter(10000);
+            if (this.map.dragging && this.map.dragging.enabled()) {
+              this.map.dragging.disable();
             }
-          }, 4000);
+          }
+        }, { passive: true });
+
+        window.addEventListener('pointermove', (e) => {
+          if (!isNavPointerDragging) return;
+          const dx = e.clientX - lastScreenX;
+          const dy = e.clientY - lastScreenY;
+          lastScreenX = e.clientX;
+          lastScreenY = e.clientY;
+
+          const rad = getHeadingRad();
+          // Inverse of rotate(-heading) is rotate(+heading):
+          // screen vector (dx, dy) -> map local vector (u, v)
+          const u = dx * Math.cos(rad) - dy * Math.sin(rad);
+          const v = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+          // Panning the camera by [-u, -v] shifts the map image by exactly (dx, dy) on screen
+          this.map.panBy([-u, -v], { animate: false });
+          this.scheduleAutoRecenter(10000);
+        }, { passive: true });
+
+        const endNavDrag = () => {
+          if (isNavPointerDragging) {
+            isNavPointerDragging = false;
+            this.scheduleAutoRecenter(10000);
+            const isNavHeadUp = document.body.classList.contains('nav-head-up-active');
+            if (!isNavHeadUp && this.map.dragging && !this.map.dragging.enabled()) {
+              this.map.dragging.enable();
+            }
+          }
+        };
+        window.addEventListener('pointerup', endNavDrag, { passive: true });
+        window.addEventListener('pointercancel', endNavDrag, { passive: true });
+
+        // Wheel / Touchpad Two-Finger Scroll (Défilement naturel sur ordinateur)
+        container.addEventListener('wheel', (e) => {
+          // If Ctrl is held (or trackpad pinch-to-zoom), let Leaflet handle zoom
+          if (e.ctrlKey) return;
+          
+          e.preventDefault();
+          this.setAutoFollow(false);
+          this.scheduleAutoRecenter(10000);
+
+          const rad = getHeadingRad();
+          // On computer, wheel deltaX/deltaY scrolls screen in direct natural sense:
+          // Scroll DOWN (deltaY > 0) -> view scrolls down
+          // Scroll UP (deltaY < 0) -> view scrolls up
+          // Scroll RIGHT (deltaX > 0) -> view scrolls right
+          // Scroll LEFT (deltaX < 0) -> view scrolls left
+          const dx = e.deltaX;
+          const dy = e.deltaY;
+
+          const u = dx * Math.cos(rad) - dy * Math.sin(rad);
+          const v = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+          // Pan Leaflet map smoothly
+          this.map.panBy([u, v], { animate: false });
+        }, { passive: false });
+      };
+      setupNaturalScreenNavigation();
+
+      const origMouseEventToContainerPoint = this.map.mouseEventToContainerPoint.bind(this.map);
+      this.map.mouseEventToContainerPoint = function(e) {
+        if (document.body.classList.contains('nav-head-up-active')) {
+          const c = this._container;
+          const heading = (window.trottiApp && window.trottiApp.mapManager && window.trottiApp.mapManager.currentLocation)
+            ? (window.trottiApp.mapManager.currentLocation.heading || 0)
+            : 0;
+          const rad = (heading * Math.PI) / 180;
+          const rect = c.getBoundingClientRect();
+          const centerX = rect.left + rect.width / 2;
+          const centerY = rect.top + rect.height / 2;
+
+          const clientX = (e.touches && e.touches[0]) ? e.touches[0].clientX : (e.clientX !== undefined ? e.clientX : centerX);
+          const clientY = (e.touches && e.touches[0]) ? e.touches[0].clientY : (e.clientY !== undefined ? e.clientY : centerY);
+
+          const dx = clientX - centerX;
+          const dy = clientY - centerY;
+
+          const localX = dx * Math.cos(rad) - dy * Math.sin(rad);
+          const localY = dx * Math.sin(rad) + dy * Math.cos(rad);
+
+          return new L.Point(c.offsetWidth / 2 + localX, c.offsetHeight / 2 + localY);
         }
-      });
+        return origMouseEventToContainerPoint(e);
+      };
 
       // Tile Layer Factory with reliable, fast public CDNs without API keys
-      this.currentLayerId = 'streets';
+      this.currentLayerId = 'satellite';
       this.currentBaseLayer = null;
 
-      // Restore saved map layer or default to Esri Streets GPS
-      let savedLayer = localStorage.getItem('trottiwaze_map_layer') || 'streets';
-      if (savedLayer === 'waze') {
-        savedLayer = 'streets';
-        try { localStorage.setItem('trottiwaze_map_layer', 'streets'); } catch(e) {}
+      // Restore saved map layer or default to Esri World Satellite Imagery
+      let savedLayer = localStorage.getItem('trottiwaze_map_layer');
+      if (!savedLayer || savedLayer === 'streets' || savedLayer === 'waze') {
+        savedLayer = 'satellite';
+        try { localStorage.setItem('trottiwaze_map_layer', 'satellite'); } catch(e) {}
       }
       this.setTileLayer(savedLayer);
 
@@ -1990,8 +2197,32 @@
 
     setAutoFollow(enabled) {
       this.isAutoFollowing = enabled;
+      if (enabled) {
+        this.clearAutoRecenter();
+      }
       const btn = document.getElementById('btn-recenter');
       if (btn) btn.classList.toggle('active-tracking', enabled);
+    }
+
+    scheduleAutoRecenter(delayMs = 10000) {
+      this.clearAutoRecenter();
+      const isNavHeadUp = document.body.classList.contains('nav-head-up-active');
+      const isNavigating = (window.trottiApp && window.trottiApp.navigationEngine && window.trottiApp.navigationEngine.isNavigating);
+      if (isNavHeadUp || isNavigating) {
+        this.autoRecenterTimer = setTimeout(() => {
+          if (!this.isAutoFollowing && this.currentLocation) {
+            const currentHeadUp = document.body.classList.contains('nav-head-up-active');
+            this.recenter(currentHeadUp ? 19 : 18);
+          }
+        }, delayMs);
+      }
+    }
+
+    clearAutoRecenter() {
+      if (this.autoRecenterTimer) {
+        clearTimeout(this.autoRecenterTimer);
+        this.autoRecenterTimer = null;
+      }
     }
 
     createScooterMarker(lat, lng, iconChar = '🛴') {
@@ -2049,6 +2280,7 @@
     }
 
     recenter(zoom = 16) {
+      this.clearAutoRecenter();
       this.setAutoFollow(true);
       const isHeadUp = document.body.classList.contains('nav-head-up-active');
       const targetZoom = isHeadUp ? 19 : zoom;
@@ -2120,7 +2352,82 @@
       const mainLine = L.polyline(coordinates, { color: strokeColor, weight: 5.5, opacity: 1.0, lineCap: 'round', lineJoin: 'round' }).addTo(this.map);
 
       this.routePolylines.push(glowLine, casingLine, mainLine);
-      this.map.fitBounds(mainLine.getBounds(), { padding: [50, 50], maxZoom: 16 });
+      this.fitRouteOverview(coordinates);
+    }
+
+    fitRouteOverview(coordinates) {
+      if (!coordinates || coordinates.length === 0) return;
+      this._applyFitBounds(coordinates);
+
+      // Re-run after CSS layout and sheet slide animation completes to guarantee 100% visible framing
+      if (this._fitOverviewTimer) clearTimeout(this._fitOverviewTimer);
+      this._fitOverviewTimer = setTimeout(() => {
+        this._applyFitBounds(coordinates);
+      }, 220);
+    }
+
+    _applyFitBounds(coordinates) {
+      if (!coordinates || coordinates.length === 0 || !this.map) return;
+      this.map.invalidateSize();
+
+      // Geographic padding: expand bounds by 8% so start/dest markers & bends have breathing room
+      const bounds = L.latLngBounds(coordinates).pad(0.08);
+
+      const routeSheet = document.getElementById('waze-route-sheet');
+      const routePanel = document.getElementById('route-panel');
+      const hudDash = document.getElementById('hud-dashboard');
+      const floatingStack = document.querySelector('.map-floating-stack');
+
+      const winH = window.innerHeight || document.documentElement.clientHeight || 800;
+      const winW = window.innerWidth || document.documentElement.clientWidth || 400;
+
+      // Dynamic bottom occlusion (Sheet + HUD)
+      let bottomPad = 380;
+      if (routeSheet && routeSheet.style.display !== 'none') {
+        const sheetRect = routeSheet.getBoundingClientRect();
+        if (sheetRect.top > 0 && sheetRect.top < winH) {
+          bottomPad = Math.max(370, Math.round(winH - sheetRect.top + 45));
+        } else {
+          bottomPad = 380;
+        }
+      } else if (hudDash && hudDash.style.display !== 'none') {
+        const hudRect = hudDash.getBoundingClientRect();
+        bottomPad = Math.max(120, Math.round(winH - hudRect.top + 30));
+      }
+
+      // Dynamic top occlusion (Route panel)
+      let topPad = 135;
+      if (routePanel && routePanel.style.display !== 'none') {
+        const panelRect = routePanel.getBoundingClientRect();
+        if (panelRect.bottom > 0) {
+          topPad = Math.max(125, Math.round(panelRect.bottom + 35));
+        }
+      }
+
+      // Dynamic right occlusion (Avoid floating action stack buttons)
+      let rightPad = 85;
+      if (floatingStack && floatingStack.offsetWidth > 0) {
+        const stackRect = floatingStack.getBoundingClientRect();
+        if (stackRect.left > 0 && stackRect.left < winW) {
+          rightPad = Math.max(80, Math.round(winW - stackRect.left + 25));
+        }
+      }
+
+      // Left occlusion margin
+      let leftPad = 55;
+      if (routePanel && routePanel.style.display !== 'none' && winW > 768) {
+        const panelRect = routePanel.getBoundingClientRect();
+        if (panelRect.left < 50 && panelRect.width < winW * 0.6) {
+          leftPad = Math.max(leftPad, Math.round(panelRect.right + 25));
+        }
+      }
+
+      this.map.fitBounds(bounds, {
+        paddingTopLeft: [leftPad, topPad],
+        paddingBottomRight: [rightPad, bottomPad],
+        maxZoom: 15,
+        animate: true
+      });
     }
 
     clearRoute() {
@@ -2249,6 +2556,59 @@
       return results.length > 0 ? { lat: results[0].lat, lng: results[0].lng } : null;
     }
 
+    async reverseGeocode(lat, lng) {
+      if (lat === undefined || lat === null || lng === undefined || lng === null) return null;
+      const numLat = parseFloat(lat);
+      const numLng = parseFloat(lng);
+
+      // 1. Priority: French National Address API (BAN - api-adresse.data.gouv.fr)
+      try {
+        const banUrl = `https://api-adresse.data.gouv.fr/reverse/?lat=${numLat}&lon=${numLng}`;
+        const res = await fetch(banUrl);
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.features && data.features.length > 0) {
+            const props = data.features[0].properties;
+            // Best format: housenumber + street name + city (e.g. "14 Boulevard Richard Lenoir, Paris")
+            if (props.name && props.city) {
+              return `${props.name}, ${props.city}`;
+            } else if (props.label) {
+              return props.label;
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('BAN reverse geocode error:', e);
+      }
+
+      // 2. Fallback: OpenStreetMap Nominatim with address details
+      try {
+        const nomUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${numLat}&lon=${numLng}&zoom=18&addressdetails=1`;
+        const res = await fetch(nomUrl, { headers: { 'Accept-Language': 'fr' } });
+        if (res.ok) {
+          const data = await res.json();
+          if (data && data.address) {
+            const addr = data.address;
+            const house = addr.house_number || '';
+            const road = addr.road || addr.pedestrian || addr.street || addr.suburb || '';
+            const city = addr.city || addr.town || addr.village || addr.municipality || '';
+            const streetWithNum = [house, road].filter(Boolean).join(' ');
+            if (streetWithNum && city) {
+              return `${streetWithNum}, ${city}`;
+            } else if (streetWithNum) {
+              return streetWithNum;
+            } else if (data.display_name) {
+              return data.display_name.split(',').slice(0, 2).join(',').trim();
+            }
+          }
+        }
+      } catch (e) {
+        console.warn('Nominatim reverse error:', e);
+      }
+
+      return `Repère (${numLat.toFixed(4)}, ${numLng.toFixed(4)})`;
+    }
+
     async calculateRoutes(startCoords, endCoords) {
       const sLat = startCoords.lat, sLng = startCoords.lng;
       const eLat = endCoords.lat, eLng = endCoords.lng;
@@ -2310,14 +2670,73 @@
         // Leaflet requires [lat, lng], OSRM GeoJSON provides [lng, lat]
         const coords = osrmRoute.geometry.coordinates.map(c => [c[1], c[0]]);
         const distanceKm = parseFloat((osrmRoute.distance / 1000).toFixed(2));
-        const steps = osrmRoute.legs ? osrmRoute.legs.flatMap(leg => (leg.steps || []).map(s => ({
-          instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (s.name ? `Prenez ${s.name}` : 'Continuez tout droit'),
-          distanceMeters: Math.round(s.distance),
-          street: s.name || 'Voie aménagée',
-          modifier: s.maneuver.modifier || (s.maneuver.type === 'arrive' ? 'arrive' : 'straight'),
-          safety: '🟢 Voie cyclable'
-        }))) : [];
-        return { coords, distanceKm, steps };
+        
+        let hasMotorway = false;
+        const motorwayNames = [];
+        const roadsOver50 = [];
+
+        const steps = osrmRoute.legs ? osrmRoute.legs.flatMap(leg => {
+          const legSteps = leg.steps || [];
+          return legSteps.map(s => {
+            const rawName = (s.name || '').trim();
+            const rawRef = (s.ref || '').trim();
+            const fullLabel = [rawRef, rawName].filter(Boolean).join(' - ') || 'Voie';
+
+            // Normalisation sans accents et minuscules pour une détection 100% robuste
+            const normName = (rawName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+            const normRef = (rawRef || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+
+            // 1. Détection stricte Autoroutes / Voies rapides (Interdiction absolue trottinettes R412-43-1)
+            const isMway = /(autoroute|peripherique|periph|voie rapide|voie express|route express|rocade)/i.test(normName) ||
+                           /(autoroute|periph)/i.test(normRef) ||
+                           /^a\s?\d{1,3}\b/i.test(normRef) ||
+                           /^(n|rn)\s?104\b/i.test(normRef); // Francilienne autoroutière
+
+            if (isMway) {
+              hasMotorway = true;
+              if (fullLabel && !motorwayNames.includes(fullLabel)) {
+                motorwayNames.push(fullLabel);
+              }
+            }
+
+            // 2. Détection des portions limitées à plus de 50 km/h (Code de la route R412-43-1)
+            const stepSpeedKmh = (s.duration && s.duration > 0) ? (s.distance / s.duration) * 3.6 : 0;
+            const isOver50 = isMway ||
+                             (stepSpeedKmh > 55) ||
+                             /^(n|rn)\s?\d{1,4}\b/i.test(normRef) ||
+                             /(voie sur berge|quai express|rocade|deviation|contournement|route nationale)/i.test(normName) ||
+                             /(70|80|90|110|130)\s*km\/h/i.test(normName) ||
+                             /(70|80|90|110|130)\s*km\/h/i.test(normRef);
+
+            if (isOver50 && !isMway) {
+              const roadIdentifier = fullLabel !== 'Voie' ? fullLabel : (rawRef || 'Axe rapide');
+              if (roadIdentifier && !roadsOver50.includes(roadIdentifier)) {
+                roadsOver50.push(roadIdentifier);
+              }
+            }
+
+            return {
+              instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (rawName ? `Prenez ${rawName}` : 'Continuez tout droit'),
+              distanceMeters: Math.round(s.distance),
+              street: rawName || rawRef || 'Voie aménagée',
+              ref: rawRef,
+              modifier: s.maneuver.modifier || (s.maneuver.type === 'arrive' ? 'arrive' : 'straight'),
+              safety: isMway ? '⛔ Autoroute interdite' : (isOver50 ? '⚠️ Route > 50 km/h' : '🟢 Voie cyclable / urbaine'),
+              isMotorway: isMway,
+              isOver50: isOver50
+            };
+          });
+        }) : [];
+
+        return {
+          coords,
+          distanceKm,
+          steps,
+          hasMotorway,
+          motorwayNames,
+          hasSpeedOver50: (roadsOver50.length > 0),
+          roadsOver50
+        };
       }
       return null;
     }
@@ -2344,6 +2763,12 @@
         const parsed = this._parseOSRM(osrmRoute);
         if (!parsed || !parsed.coords || parsed.coords.length < 2) return;
         
+        // RÈGLE CRITIQUE TROTTINETTE : Exclusion totale des autoroutes et voies rapides
+        if (parsed.hasMotorway) {
+          console.warn(`[TrottiWaze] Itinéraire rejeté car il emprunte une autoroute/voie rapide interdite aux trottinettes (${parsed.motorwayNames.join(', ')}).`);
+          return;
+        }
+
         // If user wants ONLY paved roads: car routes are always 100% asphalt by definition.
         // For bike routes, reject if unpaved dirt/gravel was detected.
         if (avoidDirt && !isGuaranteedPaved && this._isUnpavedOrDirt(parsed.steps)) {
@@ -2354,11 +2779,13 @@
           data: parsed,
           mode: defaultMode,
           title,
-          isPaved: isGuaranteedPaved || !this._isUnpavedOrDirt(parsed.steps)
+          isPaved: isGuaranteedPaved || !this._isUnpavedOrDirt(parsed.steps),
+          hasSpeedOver50: parsed.hasSpeedOver50,
+          roadsOver50: parsed.roadsOver50
         });
       };
 
-      // Priority 1: Direct Car Route (100% asphalt / major arteries without dead-ends or dirt)
+      // Priority 1: Direct Car Route (100% asphalt / major arteries without dead-ends or dirt, tested for motorway ban)
       if (Array.isArray(carRoutes) && carRoutes.length > 0) {
         carRoutes.forEach((cr, i) => {
           addCandidate(cr, i === 0 ? 'fast' : 'eco', i === 0 ? '⚡ Direct & Rapide' : '🔋 Alternative Chaussée', true);
@@ -2367,7 +2794,7 @@
         addCandidate(carRoutes, 'fast', '⚡ Direct & Rapide', true);
       }
 
-      // Priority 2: Bike routes (tested for dirt paths if filter is enabled)
+      // Priority 2: Bike routes (never on motorways, tested for dirt paths if filter is enabled)
       if (bikeRoutes && bikeRoutes.length > 0) {
         bikeRoutes.forEach((br, idx) => {
           addCandidate(br, idx === 0 ? 'safe' : 'eco', idx === 0 ? '🟢 Sécurisé (Pistes)' : '🔋 Éco & Pistes Douces');
@@ -2408,7 +2835,9 @@
           data: fallback,
           mode: 'safe',
           title: '🟢 Voie Bitumée',
-          isPaved: true
+          isPaved: true,
+          hasSpeedOver50: false,
+          roadsOver50: []
         });
       }
 
@@ -2426,9 +2855,6 @@
         const slope = mode === 'fast' ? 4.2 : mode === 'safe' ? 2.5 : 1.1;
         
         // Realistic calibrated scooter cruising speeds:
-        // - Fast: nominal top speed (e.g. 25 km/h)
-        // - Safe: ~88% of top speed for relaxed cycleway navigation (e.g. 22 km/h)
-        // - Eco: ~80% of top speed for optimal energy saving (e.g. 20 km/h)
         const modeSpeed = mode === 'fast' ? speed :
                           mode === 'safe' ? Math.max(16, Math.round(speed * 0.88)) :
                           Math.max(15, Math.round(speed * 0.80));
@@ -2451,7 +2877,9 @@
           maxSlopePct: slope,
           cruisingSpeedKmh: modeSpeed,
           coordinates: cand.data.coords, // Full array of real street turns & vertices
-          steps: cand.data.steps
+          steps: cand.data.steps,
+          hasSpeedOver50Warning: !!cand.hasSpeedOver50,
+          speedOver50Details: cand.roadsOver50 && cand.roadsOver50.length > 0 ? cand.roadsOver50.slice(0, 3).join(', ') : ''
         };
       });
 
@@ -2541,6 +2969,9 @@
       if (this.compassManager) {
         this.compassManager.mode = 'course-up';
       }
+      if (this.mapManager && this.mapManager.map) {
+        this.mapManager.map.options.scrollWheelZoom = 'center';
+      }
 
       // Compute initial departure coordinates and forward road heading
       const coords = route && route.coordinates && route.coordinates.length > 0 ? route.coordinates : null;
@@ -2616,6 +3047,57 @@
         this.startSimulation();
       } else {
         this.startRealGpsTracking();
+      }
+    }
+
+    switchRoute(newRoute) {
+      if (!newRoute || !this.isNavigating) return;
+      this.activeRoute = newRoute;
+      this.currentStepIndex = 0;
+      this.announcedTurn150 = false;
+      this.announcedTurn35 = false;
+
+      const coords = newRoute.coordinates || [];
+      if (this.isSimulated && coords.length > 0) {
+        // Seamlessly snap simulation cursor to the closest point along the new route
+        let bestIdx = 0;
+        let minDist = Infinity;
+        let cLat = coords[0][0];
+        let cLng = coords[0][1];
+        if (this.mapManager && this.mapManager.currentLocation) {
+          cLat = this.mapManager.currentLocation.lat;
+          cLng = this.mapManager.currentLocation.lng;
+        }
+        for (let i = 0; i < coords.length; i++) {
+          const d = this.calculateDistance(cLat, cLng, coords[i][0], coords[i][1]);
+          if (d < minDist) {
+            minDist = d;
+            bestIdx = i;
+          }
+        }
+        this.simIndex = bestIdx;
+      }
+
+      // Pre-feed Turn-By-Turn HUD with first step of new route
+      if (newRoute.steps && newRoute.steps.length > 0 && this.onStepUpdate) {
+        const firstStep = newRoute.steps[0];
+        this.onStepUpdate({
+          distanceMeters: firstStep.distanceMeters || 100,
+          street: firstStep.street || 'Suivre le nouvel itinéraire',
+          instruction: firstStep.instruction || 'Suivre le nouvel itinéraire',
+          modifier: firstStep.modifier || 'straight'
+        });
+      }
+
+      // Refresh trip telemetry immediately for new route
+      if (this.onTripUpdate) {
+        const batteryStatus = this.batteryEngine.estimateTrip(newRoute.distanceKm, newRoute.elevationGainM || 5);
+        this.lastReportedTrip = {
+          remainingDistKm: newRoute.distanceKm,
+          remainingMin: newRoute.durationMin,
+          batteryStatus
+        };
+        this.onTripUpdate(this.lastReportedTrip);
       }
     }
 
@@ -2868,7 +3350,14 @@
       if (pinEl) {
         pinEl.style.transform = 'rotate(0deg)';
       }
+      if (this.mapManager) {
+        this.mapManager.clearAutoRecenter();
+      }
       if (this.mapManager && this.mapManager.map) {
+        if (this.mapManager.map.dragging && !this.mapManager.map.dragging.enabled()) {
+          this.mapManager.map.dragging.enable();
+        }
+        this.mapManager.map.options.scrollWheelZoom = true;
         this.mapManager.map.setZoom(15);
         setTimeout(() => this.mapManager.map.invalidateSize(), 200);
       }
@@ -3194,6 +3683,370 @@
   }
 
   // =========================================================================
+  // 15.5. GPS Permanent Permission Manager
+  // =========================================================================
+  class GPSPermissionManager {
+    constructor(app) {
+      this.app = app;
+      this.state = 'unknown'; // 'granted', 'prompt', 'denied'
+      this.elBanner = null;
+      this.elBadge = null;
+      this.elDesc = null;
+      this.elGuideModal = null;
+    }
+
+    async init() {
+      this.elBanner = document.getElementById('gps-permission-banner');
+      this.elBadge = document.getElementById('gps-perm-status-badge');
+      this.elDesc = document.getElementById('gps-perm-status-desc');
+      this.elGuideModal = document.getElementById('gps-guide-modal');
+
+      this.bindEvents();
+      await this.checkPermission(false);
+    }
+
+    async checkPermission(triggerIfPrompt = false) {
+      if (!navigator.geolocation) {
+        this.updateUI('unsupported');
+        return;
+      }
+
+      if (navigator.permissions && navigator.permissions.query) {
+        try {
+          const perm = await navigator.permissions.query({ name: 'geolocation' });
+          this.state = perm.state;
+          this.updateUI(perm.state);
+
+          perm.onchange = () => {
+            this.state = perm.state;
+            this.updateUI(perm.state);
+            if (perm.state === 'granted') {
+              localStorage.setItem('trottiwaze_gps_permanent_granted', 'true');
+              localStorage.setItem('trottiwaze_gps_allowed', 'true');
+              this.app.initUserGPS();
+            }
+          };
+        } catch (e) {
+          if (localStorage.getItem('trottiwaze_gps_allowed') === 'true') {
+            this.updateUI('granted');
+          } else {
+            this.updateUI('prompt');
+          }
+        }
+      } else {
+        if (localStorage.getItem('trottiwaze_gps_allowed') === 'true') {
+          this.updateUI('granted');
+        } else {
+          this.updateUI('prompt');
+        }
+      }
+
+      if (triggerIfPrompt && this.state === 'prompt') {
+        this.requestPermanentAccess();
+      }
+    }
+
+    updateUI(state) {
+      this.state = state;
+      // 1. Update Settings Badge & Description
+      if (this.elBadge) {
+        if (state === 'granted') {
+          this.elBadge.className = 'gps-perm-status-badge granted';
+          this.elBadge.textContent = '🟢 Accès Définitif Accordé';
+          if (this.elDesc) this.elDesc.textContent = 'Le navigateur garde votre autorisation en mémoire permanente. Aucune demande à la connexion.';
+        } else if (state === 'denied') {
+          this.elBadge.className = 'gps-perm-status-badge denied';
+          this.elBadge.textContent = '🔴 Accès Bloqué';
+          if (this.elDesc) this.elDesc.textContent = 'La localisation est bloquée par le navigateur. Cliquez sur l\'aide pour débloquer en 2 clics.';
+        } else {
+          this.elBadge.className = 'gps-perm-status-badge prompt';
+          this.elBadge.textContent = '🟡 En Attente';
+          if (this.elDesc) this.elDesc.textContent = 'Cliquez sur "Toujours autoriser" pour ne plus avoir à revalider à chaque connexion.';
+        }
+      }
+
+      // 2. Banner visibility: only show if state is 'prompt' and not dismissed
+      if (this.elBanner) {
+        const isDismissed = sessionStorage.getItem('trottiwaze_gps_banner_dismissed') === 'true';
+        if (state === 'prompt' && !isDismissed) {
+          this.elBanner.style.display = 'flex';
+        } else {
+          this.elBanner.style.display = 'none';
+        }
+      }
+    }
+
+    requestPermanentAccess() {
+      if (!navigator.geolocation) {
+        this.app.showToast('⚠️ Géolocalisation non supportée par votre navigateur');
+        return;
+      }
+
+      this.app.showToast('📍 Choisissez « Toujours autoriser sur ce site » dans la fenêtre du navigateur');
+
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          localStorage.setItem('trottiwaze_gps_permanent_granted', 'true');
+          localStorage.setItem('trottiwaze_gps_allowed', 'true');
+          this.state = 'granted';
+          this.updateUI('granted');
+          this.app.showToast('✅ Accès GPS permanent mémorisé !');
+          this.app.initUserGPS();
+        },
+        (err) => {
+          console.warn('GPS request notice:', err);
+          if (err.code === 1) { // PERMISSION_DENIED
+            this.state = 'denied';
+            this.updateUI('denied');
+            this.openGuideModal();
+          }
+        },
+        { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+      );
+    }
+
+    openGuideModal() {
+      if (this.elGuideModal) this.elGuideModal.style.display = 'flex';
+    }
+
+    closeGuideModal() {
+      if (this.elGuideModal) this.elGuideModal.style.display = 'none';
+    }
+
+    bindEvents() {
+      const btnGrant = document.getElementById('btn-grant-permanent-gps');
+      if (btnGrant) btnGrant.addEventListener('click', () => this.requestPermanentAccess());
+
+      const btnGuide = document.getElementById('btn-guide-permanent-gps');
+      if (btnGuide) btnGuide.addEventListener('click', () => this.openGuideModal());
+
+      const btnDismiss = document.getElementById('btn-dismiss-perm-banner');
+      if (btnDismiss) {
+        btnDismiss.addEventListener('click', () => {
+          if (this.elBanner) this.elBanner.style.display = 'none';
+          sessionStorage.setItem('trottiwaze_gps_banner_dismissed', 'true');
+        });
+      }
+
+      const btnSettingsGrant = document.getElementById('btn-settings-grant-gps');
+      if (btnSettingsGrant) btnSettingsGrant.addEventListener('click', () => this.requestPermanentAccess());
+
+      const btnSettingsGuide = document.getElementById('btn-settings-gps-guide');
+      if (btnSettingsGuide) btnSettingsGuide.addEventListener('click', () => this.openGuideModal());
+
+      const btnCloseGuide = document.getElementById('btn-close-gps-guide');
+      if (btnCloseGuide) btnCloseGuide.addEventListener('click', () => this.closeGuideModal());
+
+      const btnGuideOk = document.getElementById('btn-guide-ok');
+      if (btnGuideOk) btnGuideOk.addEventListener('click', () => this.closeGuideModal());
+
+      const btnGuideTrigger = document.getElementById('btn-guide-trigger-gps');
+      if (btnGuideTrigger) {
+        btnGuideTrigger.addEventListener('click', () => {
+          this.closeGuideModal();
+          this.requestPermanentAccess();
+        });
+      }
+
+      if (this.elGuideModal) {
+        this.elGuideModal.addEventListener('click', (e) => {
+          if (!e.target.closest('.modal-card')) this.closeGuideModal();
+        });
+      }
+    }
+  }
+
+  // =========================================================================
+  // 15.6. Landmarks Manager (Points de Repère personnalisés sur la carte)
+  // =========================================================================
+  class LandmarksManager {
+    constructor(mapManager, onLaunchRouteToCoords) {
+      this.mapManager = mapManager;
+      this.onLaunchRouteToCoords = onLaunchRouteToCoords;
+      this.landmarks = [];
+      this.activeTargetLandmark = null;
+      this.elDeleteModal = null;
+      this.elDeleteText = null;
+    }
+
+    init() {
+      this.elDeleteModal = document.getElementById('landmark-delete-modal');
+      this.elDeleteText = document.getElementById('landmark-delete-location-text');
+      this.bindEvents();
+      this.loadFromStorage();
+    }
+
+    loadFromStorage() {
+      try {
+        const saved = localStorage.getItem('trottiwaze_custom_landmarks');
+        if (saved) {
+          const list = JSON.parse(saved);
+          if (Array.isArray(list)) {
+            list.forEach(item => {
+              if (item && item.lat && item.lng) {
+                this.addLandmarkMarker(item.lat, item.lng, item.name || 'Point de repère', item.id, false);
+              }
+            });
+          }
+        }
+      } catch(e) {
+        console.warn('Error loading landmarks:', e);
+      }
+    }
+
+    saveToStorage() {
+      try {
+        const data = this.landmarks.map(l => ({
+          id: l.id,
+          lat: l.lat,
+          lng: l.lng,
+          name: l.name,
+          createdAt: l.createdAt
+        }));
+        localStorage.setItem('trottiwaze_custom_landmarks', JSON.stringify(data));
+      } catch(e) {}
+    }
+
+    async addLandmark(lat, lng, name = 'Point de repère') {
+      const id = 'lm_' + Date.now() + '_' + Math.floor(Math.random() * 1000);
+      let landmarkName = name;
+      if (!landmarkName || landmarkName === 'Point de repère' || landmarkName.startsWith('Point de repère')) {
+        if (window.trottiApp && window.trottiApp.routingEngine) {
+          try {
+            const resolved = await window.trottiApp.routingEngine.reverseGeocode(lat, lng);
+            if (resolved) landmarkName = resolved;
+          } catch(e) {}
+        }
+      }
+      this.addLandmarkMarker(lat, lng, landmarkName, id, true);
+      this.saveToStorage();
+      return { id, lat, lng, name: landmarkName };
+    }
+
+    addLandmarkMarker(lat, lng, name, id, isNew = true) {
+      if (!this.mapManager || !this.mapManager.map) return;
+
+      const icon = L.divIcon({
+        className: 'landmark-leaflet-container',
+        html: `
+          <div class="landmark-marker-pin" title="${name} (Double-cliquez pour supprimer)">
+            <div class="landmark-pin-bubble">
+              <span class="landmark-pin-icon">🚩</span>
+            </div>
+            <div class="landmark-pin-pulse"></div>
+          </div>
+        `,
+        iconSize: [38, 44],
+        iconAnchor: [19, 42],
+        popupAnchor: [0, -42]
+      });
+
+      const marker = L.marker([lat, lng], { icon, zIndexOffset: 700 }).addTo(this.mapManager.map);
+
+      const popupContent = `
+        <div style="font-family: Inter, sans-serif; padding: 6px 8px; text-align: center;">
+          <div style="font-weight: 700; color: #38bdf8; font-size: 13px; margin-bottom: 6px; line-height: 1.35;">🚩 ${name}</div>
+          <div style="display: flex; gap: 8px; justify-content: center; margin-top: 6px;">
+            <button id="btn-lm-route-${id}" style="background:#10b981; color:#fff; border:none; border-radius:8px; padding:6px 12px; font-size:11.5px; font-weight:700; cursor:pointer;">🚀 Y aller</button>
+            <button id="btn-lm-del-${id}" style="background:rgba(239,68,68,0.2); border:1px solid rgba(239,68,68,0.4); color:#f87171; border-radius:8px; padding:6px 12px; font-size:11.5px; font-weight:600; cursor:pointer;">🗑️ Supprimer</button>
+          </div>
+          <div style="font-size: 10px; color:#94a3b8; margin-top: 6px;">💡 Double-cliquez directement sur le repère pour le supprimer</div>
+        </div>
+      `;
+      marker.bindPopup(popupContent, { maxWidth: 280, className: 'landmark-leaflet-popup' });
+
+      marker.on('popupopen', () => {
+        const btnRoute = document.getElementById(`btn-lm-route-${id}`);
+        if (btnRoute) {
+          btnRoute.addEventListener('click', () => {
+            marker.closePopup();
+            if (this.onLaunchRouteToCoords) {
+              this.onLaunchRouteToCoords(lat, lng, name);
+            }
+          });
+        }
+        const btnDel = document.getElementById(`btn-lm-del-${id}`);
+        if (btnDel) {
+          btnDel.addEventListener('click', () => {
+            marker.closePopup();
+            this.promptDeleteLandmark(id);
+          });
+        }
+      });
+
+      // Double-click on the marker to ask confirmation to delete it!
+      marker.on('dblclick', (e) => {
+        L.DomEvent.stopPropagation(e);
+        this.promptDeleteLandmark(id);
+      });
+
+      const landmarkObj = {
+        id,
+        lat,
+        lng,
+        name,
+        createdAt: Date.now(),
+        marker
+      };
+
+      this.landmarks.push(landmarkObj);
+
+      if (isNew && window.trottiApp) {
+        window.trottiApp.showToast(`🚩 Point de repère posé : ${name}`);
+      }
+    }
+
+    promptDeleteLandmark(id) {
+      const lm = this.landmarks.find(l => l.id === id);
+      if (!lm) return;
+      this.activeTargetLandmark = lm;
+      if (this.elDeleteText) {
+        this.elDeleteText.textContent = lm.name;
+      }
+      if (this.elDeleteModal) {
+        this.elDeleteModal.style.display = 'flex';
+      }
+    }
+
+    confirmDeleteLandmark() {
+      if (!this.activeTargetLandmark) return;
+      const { id, marker, name } = this.activeTargetLandmark;
+      if (marker && this.mapManager && this.mapManager.map) {
+        this.mapManager.map.removeLayer(marker);
+      }
+      this.landmarks = this.landmarks.filter(l => l.id !== id);
+      this.saveToStorage();
+      this.closeDeleteModal();
+      if (window.trottiApp) window.trottiApp.showToast(`🗑️ Point de repère supprimé`);
+      this.activeTargetLandmark = null;
+    }
+
+    closeDeleteModal() {
+      if (this.elDeleteModal) {
+        this.elDeleteModal.style.display = 'none';
+      }
+      this.activeTargetLandmark = null;
+    }
+
+    bindEvents() {
+      const btnConfirm = document.getElementById('btn-confirm-delete-landmark');
+      if (btnConfirm) btnConfirm.addEventListener('click', () => this.confirmDeleteLandmark());
+
+      const btnCancel = document.getElementById('btn-cancel-delete-landmark');
+      if (btnCancel) btnCancel.addEventListener('click', () => this.closeDeleteModal());
+
+      const btnClose = document.getElementById('btn-close-landmark-delete');
+      if (btnClose) btnClose.addEventListener('click', () => this.closeDeleteModal());
+
+      if (this.elDeleteModal) {
+        this.elDeleteModal.addEventListener('click', (e) => {
+          if (!e.target.closest('.modal-card')) this.closeDeleteModal();
+        });
+      }
+    }
+  }
+
+  // =========================================================================
   // 16. Master TrottiWaze App Controller
   // =========================================================================
   class TrottiWazeApp {
@@ -3216,6 +4069,12 @@
       this.navigationEngine = new NavigationEngine(this.mapManager, this.batteryEngine, this.rideRecorder, this.voiceEngine, this.compassManager);
       this.hazardManager = new HazardManager(this.mapManager);
       this.cockpitHUD = new CockpitHUDManager(this);
+      this.gpsPermissionManager = new GPSPermissionManager(this);
+      this.landmarksManager = new LandmarksManager(this.mapManager, (lat, lng, name) => {
+        this.selectedEndCoords = { lat, lng };
+        this.elEndInput.value = name ? `🚩 ${name}` : `📍 Repère (${lat}, ${lng})`;
+        this.calculateCurrentRoute();
+      });
 
       this.selectedRouteMode = 'fast';
       this.calculatedRoutes = null;
@@ -3234,8 +4093,15 @@
       this.cacheDOMElements();
       this.initEvents();
       this.initUserGPS();
+      if (this.gpsPermissionManager) {
+        this.gpsPermissionManager.init();
+      }
+      if (this.landmarksManager) {
+        this.landmarksManager.init();
+      }
       this.renderGarageFleetUI();
       this.renderRidesHistoryUI();
+      this.renderRecentNavigationsUI();
       this.initVoiceUI();
       this.updateUserAuthUI();
       this.chargingManager.render();
@@ -3312,6 +4178,17 @@
 
       this.elWhCalcDrawer = document.getElementById('wh-calc-drawer');
       this.elToggleCharging = document.getElementById('toggle-charging-stations');
+      if (this.elToggleCharging) this.elToggleCharging.checked = false;
+      const filterShowCh = document.getElementById('filter-show-charges');
+      if (filterShowCh) filterShowCh.checked = false;
+
+      // Navigation Route Switcher Full-Height Drawer & Tab
+      this.elNavRouteDrawerTab = document.getElementById('nav-route-drawer-tab');
+      this.elNavRouteDrawer = document.getElementById('nav-route-drawer');
+      this.elNavDrawerRoutesList = document.getElementById('nav-drawer-routes-list');
+      this.elNavDrawerActiveTitle = document.getElementById('nav-drawer-active-title');
+      this.elBtnCloseNavDrawer = document.getElementById('btn-close-nav-drawer');
+      this.elBtnDrawerRecalcGps = document.getElementById('btn-drawer-recalc-gps');
     }
 
     initUserGPS() {
@@ -3339,6 +4216,10 @@
         const speedKmh = Math.round((speed || 0) * 3.6);
 
         localStorage.setItem('trottiwaze_gps_allowed', 'true');
+        localStorage.setItem('trottiwaze_gps_permanent_granted', 'true');
+        if (this.gpsPermissionManager) {
+          this.gpsPermissionManager.updateUI('granted');
+        }
         try {
           localStorage.setItem('trottiwaze_last_coords', JSON.stringify({
             lat: latitude,
@@ -3848,8 +4729,8 @@
 
       const chkAvoidDirt = document.getElementById('filter-avoid-dirt-paths');
       const sumFilters = document.getElementById('acc-filters-summary');
-      if (sumFilters && chkAvoidDirt) {
-        sumFilters.textContent = chkAvoidDirt.checked ? '100% Goudron • Chemins interdits' : 'Chemins autorisés';
+      if (sumFilters) {
+        sumFilters.textContent = 'Zéro Autoroute • Alerte > 50 km/h • 100% Goudron';
       }
 
       const sumMaps = document.getElementById('acc-maps-summary');
@@ -3949,6 +4830,31 @@
         }
       });
 
+      // Quick Navigations History Direct Access
+      const btnQuickHistory = document.getElementById('btn-quick-history');
+      if (btnQuickHistory) {
+        btnQuickHistory.addEventListener('click', () => {
+          this.openRidesHistoryModal();
+        });
+      }
+
+      const btnSeeAllRides = document.getElementById('btn-see-all-rides');
+      if (btnSeeAllRides) {
+        btnSeeAllRides.addEventListener('click', () => {
+          this.openRidesHistoryModal();
+        });
+      }
+
+      const btnShowHist = document.getElementById('btn-show-history');
+      if (btnShowHist) {
+        btnShowHist.addEventListener('click', (e) => {
+          e.stopPropagation();
+          if (this.elEndInput) {
+            this.elEndInput.focus();
+          }
+        });
+      }
+
       // Compass & Map Rotation Button
       const compassBtn = document.getElementById('btn-compass-mode');
       if (compassBtn) {
@@ -3969,53 +4875,87 @@
         });
       }
 
-      // Add Scooter Drawer Form
-      const btnOpenAdd = document.getElementById('btn-open-add-scooter');
+      // Add Scooter Drawer Form & Buttons
+      const btnOpenAdd = document.getElementById('btn-show-add-scooter') || document.getElementById('btn-open-add-scooter');
       if (btnOpenAdd) {
         btnOpenAdd.addEventListener('click', () => {
-          this.openScooterDrawer();
+          this.openScooterDrawer(null);
         });
       }
 
-      const btnCloseAdd = document.getElementById('btn-close-scooter-form');
+      const btnCloseAdd = document.getElementById('btn-close-scooter-drawer') || document.getElementById('btn-close-scooter-form');
       if (btnCloseAdd) {
         btnCloseAdd.addEventListener('click', () => {
-          document.getElementById('scooter-form-drawer').style.display = 'none';
+          const drawer = document.getElementById('scooter-form-drawer');
+          if (drawer) drawer.style.display = 'none';
         });
       }
 
-      // Scooter Model Preset Autocomplete / Quick Fill
-      const selectPreset = document.getElementById('scooter-preset-select');
-      if (selectPreset) {
-        selectPreset.addEventListener('change', () => {
-          const key = selectPreset.value;
-          if (SCOOTER_PRESETS_DATABASE[key]) {
-            const preset = SCOOTER_PRESETS_DATABASE[key];
-            document.getElementById('scooter-name').value = preset.name;
-            document.getElementById('scooter-capacity').value = preset.wh;
-            document.getElementById('scooter-rider-weight').value = preset.riderKg;
-            document.getElementById('scooter-vehicle-weight').value = preset.scootKg;
-            document.getElementById('scooter-speed-slider').value = preset.speed;
-            document.getElementById('val-speed-slider').textContent = `${preset.speed} km/h`;
-            document.querySelectorAll('.speed-preset-btn').forEach(b => b.classList.toggle('active', parseInt(b.getAttribute('data-speed'), 10) === preset.speed));
+      // Scooter Icon Picker in Drawer
+      document.querySelectorAll('.scooter-icon-choice').forEach(btn => {
+        btn.addEventListener('click', () => {
+          document.querySelectorAll('.scooter-icon-choice').forEach(b => b.classList.remove('active'));
+          btn.classList.add('active');
+          this.selectedScooterIcon = btn.getAttribute('data-icon') || '🛴';
+        });
+      });
+
+      // Wh Calculator V x Ah Toggle & Apply
+      const btnToggleWhCalc = document.getElementById('btn-toggle-wh-calc');
+      const whCalcDrawer = document.getElementById('wh-calc-drawer');
+      if (btnToggleWhCalc && whCalcDrawer) {
+        btnToggleWhCalc.addEventListener('click', () => {
+          whCalcDrawer.style.display = (whCalcDrawer.style.display === 'none' || !whCalcDrawer.style.display) ? 'block' : 'none';
+        });
+      }
+
+      const btnApplyWhCalc = document.getElementById('btn-apply-wh-calc');
+      if (btnApplyWhCalc) {
+        btnApplyWhCalc.addEventListener('click', () => {
+          const volts = parseFloat(document.getElementById('calc-volts').value) || 0;
+          const ah = parseFloat(document.getElementById('calc-amphours').value) || 0;
+          if (volts > 0 && ah > 0) {
+            const wh = Math.round(volts * ah);
+            const capInp = document.getElementById('scooter-capacity');
+            if (capInp) capInp.value = wh;
+            if (whCalcDrawer) whCalcDrawer.style.display = 'none';
+            this.showToast(`⚡ Capacité calculée : ${wh} Wh (${volts}V × ${ah}Ah)`);
+          } else {
+            this.showToast('⚠️ Entrez une tension (V) et un ampérage (Ah) valides');
           }
         });
       }
 
       // Save Scooter Form Button
-      const btnSaveScooter = document.getElementById('btn-save-scooter');
+      const btnSaveScooter = document.getElementById('btn-save-scooter-form') || document.getElementById('btn-save-scooter');
       if (btnSaveScooter) {
         btnSaveScooter.addEventListener('click', () => {
-          const name = document.getElementById('scooter-name').value.trim() || 'Ma Trottinette';
-          const wh = parseFloat(document.getElementById('scooter-capacity').value) || 474;
-          const riderKg = parseFloat(document.getElementById('scooter-rider-weight').value) || 75;
-          const scootKg = parseFloat(document.getElementById('scooter-vehicle-weight').value) || 19;
-          const speed = parseInt(document.getElementById('scooter-speed-slider').value, 10) || 25;
-          const battPct = parseInt(document.getElementById('scooter-initial-batt').value, 10) || 100;
-          const editId = document.getElementById('scooter-form-drawer').getAttribute('data-edit-id');
+          const nameInp = document.getElementById('scooter-custom-name') || document.getElementById('scooter-name');
+          const name = (nameInp ? nameInp.value.trim() : '') || 'Mon Véhicule';
+          
+          const whInp = document.getElementById('scooter-capacity');
+          const wh = parseFloat(whInp ? whInp.value : 474) || 474;
+
+          const riderInp = document.getElementById('scooter-rider-weight');
+          const riderKg = parseFloat(riderInp ? riderInp.value : 75) || 75;
+
+          const scootInp = document.getElementById('scooter-weight') || document.getElementById('scooter-vehicle-weight');
+          const scootKg = parseFloat(scootInp ? scootInp.value : 18) || 18;
+
+          const speedSlider = document.getElementById('scooter-speed-slider');
+          const speed = parseInt(speedSlider ? speedSlider.value : 25, 10) || 25;
+
+          const battInp = document.getElementById('scooter-battery-pct') || document.getElementById('scooter-initial-batt');
+          const battPct = parseInt(battInp ? battInp.value : 100, 10) || 100;
+
+          const editIdInp = document.getElementById('edit-scooter-id');
+          const editId = (editIdInp && editIdInp.value.trim().length > 0) ? editIdInp.value.trim() : null;
+
+          const icon = this.selectedScooterIcon || '🛴';
 
           const data = {
             name,
+            icon,
             batteryCapacityWh: wh,
             riderWeightKg: riderKg,
             scooterWeightKg: scootKg,
@@ -4031,8 +4971,11 @@
             this.showToast(`➕ "${name}" ajouté au garage !`);
           }
 
-          document.getElementById('scooter-form-drawer').style.display = 'none';
+          const drawer = document.getElementById('scooter-form-drawer');
+          if (drawer) drawer.style.display = 'none';
+
           this.renderGarageFleetUI();
+          this.updateAccordionSummaries();
         });
       }
 
@@ -4292,12 +5235,32 @@
       const btnQuickGpsFix = document.getElementById('btn-quick-gps-fix');
       if (btnQuickGpsFix) {
         btnQuickGpsFix.addEventListener('click', () => {
+          if (this.gpsPermissionManager && this.gpsPermissionManager.state !== 'granted') {
+            this.gpsPermissionManager.requestPermanentAccess();
+          }
           this.mapManager.recenter(16);
           const loc = this.mapManager.currentLocation;
           if (loc) {
             this.selectedStartCoords = { lat: loc.lat, lng: loc.lng };
             if (this.elStartInput) this.elStartInput.value = '📍 Ma position';
             this.showToast('📍 Position actuelle définie comme départ');
+          }
+        });
+      }
+
+      // Inline Address Bar GPS Button
+      const btnUseGps = document.getElementById('btn-use-gps');
+      if (btnUseGps) {
+        btnUseGps.addEventListener('click', () => {
+          if (this.gpsPermissionManager && this.gpsPermissionManager.state !== 'granted') {
+            this.gpsPermissionManager.requestPermanentAccess();
+          }
+          this.mapManager.recenter(16);
+          const loc = this.mapManager.currentLocation;
+          if (loc) {
+            this.selectedStartCoords = { lat: loc.lat, lng: loc.lng };
+            if (this.elStartInput) this.elStartInput.value = '📍 Ma position';
+            this.showToast('📍 Position GPS définie');
           }
         });
       }
@@ -4525,10 +5488,24 @@
         });
       });
 
-      // Launch Buttons
       document.getElementById('btn-start-nav').addEventListener('click', () => this.beginTrip(false));
       document.getElementById('btn-start-simu').addEventListener('click', () => this.beginTrip(true));
+      const btnCancelRoute = document.getElementById('btn-cancel-route');
+      if (btnCancelRoute) {
+        btnCancelRoute.addEventListener('click', () => this.cancelRoutePresentation());
+      }
       document.getElementById('btn-stop-nav').addEventListener('click', () => this.endTrip());
+
+      // Navigation Route Switcher Drawer Events
+      if (this.elNavRouteDrawerTab) {
+        this.setupDraggableNavTab();
+      }
+      if (this.elBtnCloseNavDrawer) {
+        this.elBtnCloseNavDrawer.addEventListener('click', () => this.closeNavRouteDrawer());
+      }
+      if (this.elBtnDrawerRecalcGps) {
+        this.elBtnDrawerRecalcGps.addEventListener('click', () => this.recalcNavigationRouteFromGps());
+      }
 
       // Voice Guidance On/Off Toggle Button in Navigation Banner
       const btnVoice = document.getElementById('btn-toggle-voice');
@@ -4541,7 +5518,7 @@
           if (!isEnabled) {
             window.speechSynthesis.cancel();
           }
-          const settingToggle = document.getElementById('setting-voice-enabled');
+          const settingToggle = document.getElementById('setting-voice-enabled') || document.getElementById('toggle-voice-enabled');
           if (settingToggle) settingToggle.checked = isEnabled;
           this.showToast(isEnabled ? '🔊 Guidage vocal activé' : '🔇 Guidage vocal coupé');
         });
@@ -4551,7 +5528,7 @@
       const quickMapModal = document.getElementById('quick-map-modal');
       const openQuickMap = () => {
         if (!quickMapModal) return;
-        const currentLayer = this.mapManager.currentLayerId || 'streets';
+        const currentLayer = this.mapManager.currentLayerId || 'satellite';
         document.querySelectorAll('.quick-map-tile').forEach(tile => {
           tile.classList.toggle('active', tile.getAttribute('data-map') === currentLayer);
         });
@@ -4618,16 +5595,81 @@
         btnSimuStop.addEventListener('click', () => this.endTrip());
       }
 
-      // Map Click: pick destination anywhere on the map directly
+      // Map Double-Click: prompt confirmation before creating an itinerary, or create a landmark marker on refusal
       if (this.mapManager && this.mapManager.map) {
-        this.mapManager.map.on('click', (e) => {
+        // Disable Leaflet's default double click zoom so double clicking is dedicated to Itinerary / Landmark
+        this.mapManager.map.doubleClickZoom.disable();
+
+        let pendingDblClickCoords = null;
+        const itineraryModal = document.getElementById('itinerary-confirm-modal');
+        const itineraryLocText = document.getElementById('itinerary-confirm-location-text');
+        const btnConfirmRoute = document.getElementById('btn-confirm-create-route');
+        const btnRefuseRoute = document.getElementById('btn-refuse-create-route');
+        const btnCloseItin = document.getElementById('btn-close-itinerary-confirm');
+
+        const closeItineraryModal = () => {
+          if (itineraryModal) itineraryModal.style.display = 'none';
+          pendingDblClickCoords = null;
+        };
+
+        if (btnCloseItin) btnCloseItin.addEventListener('click', closeItineraryModal);
+        if (itineraryModal) {
+          itineraryModal.addEventListener('click', (e) => {
+            if (!e.target.closest('.modal-card')) closeItineraryModal();
+          });
+        }
+
+        if (btnConfirmRoute) {
+          btnConfirmRoute.addEventListener('click', () => {
+            if (pendingDblClickCoords) {
+              const { lat, lng, address } = pendingDblClickCoords;
+              this.selectedEndCoords = { lat, lng };
+              this.elEndInput.value = address ? `📍 ${address}` : `📍 Destination (${lat}, ${lng})`;
+              this.calculateCurrentRoute();
+              this.showToast(`🚀 Itinéraire créé vers ${address || 'destination'}`);
+            }
+            closeItineraryModal();
+          });
+        }
+
+        if (btnRefuseRoute) {
+          btnRefuseRoute.addEventListener('click', () => {
+            if (pendingDblClickCoords) {
+              const { lat, lng, address } = pendingDblClickCoords;
+              if (this.landmarksManager) {
+                this.landmarksManager.addLandmark(lat, lng, address || 'Point de repère');
+              }
+            }
+            closeItineraryModal();
+          });
+        }
+
+        // On double-click on map: ask confirmation to create route or drop landmark
+        this.mapManager.map.on('dblclick', async (e) => {
           if (this.elNavBanner && this.elNavBanner.style.display !== 'none') return;
           const lat = parseFloat(e.latlng.lat.toFixed(5));
           const lng = parseFloat(e.latlng.lng.toFixed(5));
-          this.selectedEndCoords = { lat, lng };
-          this.elEndInput.value = `📍 Destination (${lat}, ${lng})`;
-          this.calculateCurrentRoute();
-          this.showToast('📍 Destination sélectionnée sur la carte');
+          pendingDblClickCoords = { lat, lng, address: null };
+
+          if (itineraryLocText) {
+            itineraryLocText.textContent = `📍 Recherche de l'adresse...`;
+          }
+          if (itineraryModal) {
+            itineraryModal.style.display = 'flex';
+          }
+
+          // Asynchronously fetch reverse geocoding with street number & name
+          try {
+            const address = await this.routingEngine.reverseGeocode(lat, lng);
+            if (pendingDblClickCoords && pendingDblClickCoords.lat === lat && pendingDblClickCoords.lng === lng) {
+              pendingDblClickCoords.address = address;
+              if (itineraryLocText) {
+                itineraryLocText.textContent = `📍 ${address}`;
+              }
+            }
+          } catch(err) {
+            console.warn('Error resolving address on dblclick:', err);
+          }
         });
       }
 
@@ -4804,7 +5846,7 @@
         if (this.elRoutePanel) this.elRoutePanel.classList.add('has-suggestions');
       };
 
-      // Show ONLY past recent searches on focus when input is empty (per user request)
+      // Show past recent navigations and searches
       const showRecentSearches = () => {
         const recents = (this.historyManager && this.historyManager.recents) || [];
         if (recents.length === 0) {
@@ -4814,10 +5856,19 @@
 
         suggestionsEl.innerHTML = `
           <div style="padding: 7px 10px; font-size: 10px; font-weight: 800; color: #94a3b8; text-transform: uppercase; letter-spacing: 0.6px; border-bottom: 1px solid rgba(255,255,255,0.08); display: flex; justify-content: space-between; align-items: center;">
-            <span>🕒 Recherches récentes</span>
-            <span style="font-size: 9px; color: #64748b;">${recents.length} sauvegardée(s)</span>
+            <span>🕒 Historique des navigations</span>
+            <button type="button" id="btn-view-all-history-dd" style="font-size: 9.5px; padding: 2px 7px; color: #38bdf8; border: 1px solid rgba(56,189,248,0.3); background: rgba(56,189,248,0.1); border-radius: 5px; cursor: pointer; font-weight: 600;">Tout voir ➔</button>
           </div>
         `;
+
+        const viewAllBtn = suggestionsEl.querySelector('#btn-view-all-history-dd');
+        if (viewAllBtn) {
+          viewAllBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            closeDropdown();
+            this.openRidesHistoryModal();
+          });
+        }
 
         recents.forEach(item => {
           const div = document.createElement('div');
@@ -4830,6 +5881,7 @@
               </div>
               <span class="sugg-sub">${item.subText || ''}</span>
             </div>
+            <span style="font-size: 10px; font-weight: 700; color: #10b981; background: rgba(16,185,129,0.15); border: 1px solid rgba(16,185,129,0.4); padding: 2px 6px; border-radius: 5px; margin-left: 6px;">Go ➔</span>
           `;
           div.addEventListener('click', (e) => {
             e.stopPropagation();
@@ -4843,9 +5895,13 @@
       };
 
       inputEl.addEventListener('focus', () => {
-        if (inputEl.value.trim().length === 0) {
-          showRecentSearches();
-        }
+        if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
+        showRecentSearches();
+      });
+
+      inputEl.addEventListener('click', () => {
+        if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
+        showRecentSearches();
       });
 
       inputEl.addEventListener('input', () => {
@@ -4924,11 +5980,15 @@
     }
 
     async calculateCurrentRoute() {
-      const endVal = this.elEndInput.value.trim();
-      if (!endVal) {
+      let endVal = this.elEndInput.value.trim();
+      if (!endVal && !this.selectedEndCoords) {
         if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
         if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
         return;
+      }
+      if (!endVal && this.selectedEndCoords) {
+        endVal = 'Destination sélectionnée';
+        this.elEndInput.value = endVal;
       }
 
       let startCoords = this.selectedStartCoords || this.mapManager.currentLocation;
@@ -4965,6 +6025,414 @@
       if (this.elRoutePanel) {
         this.elRoutePanel.classList.add('panel-compact');
       }
+
+      // Dezoom and fit complete route inside the visible viewport
+      setTimeout(() => {
+        const selRoute = this.calculatedRoutes ? (this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes[Object.keys(this.calculatedRoutes)[0]]) : null;
+        if (selRoute && selRoute.coordinates) {
+          this.mapManager.fitRouteOverview(selRoute.coordinates);
+        }
+      }, 120);
+    }
+
+    formatDurationMinutes(minutes) {
+      if (minutes === undefined || minutes === null || isNaN(minutes)) return '-- min';
+      const m = Math.max(0, Math.round(minutes));
+      if (m < 60) {
+        return `${m} min`;
+      }
+      const hrs = Math.floor(m / 60);
+      const rem = m % 60;
+      if (rem === 0) {
+        return `${hrs}h`;
+      }
+      return `${hrs}h ${rem.toString().padStart(2, '0')}`;
+    }
+
+    renderNavDrawerRoutesUI() {
+      if (!this.elNavDrawerRoutesList) return;
+      if (!this.calculatedRoutes) return;
+
+      const activeMode = this.selectedRouteMode || 'fast';
+      const modeTitles = {
+        fast: '⚡ Direct & Rapide',
+        safe: '🟢 Sécurisé (Pistes)',
+        eco: '🔋 Éco & Plat'
+      };
+
+      if (this.elNavDrawerActiveTitle) {
+        this.elNavDrawerActiveTitle.textContent = modeTitles[activeMode] || activeMode;
+      }
+
+      this.elNavDrawerRoutesList.innerHTML = '';
+
+      ['fast', 'safe', 'eco'].forEach(mode => {
+        const r = this.calculatedRoutes[mode];
+        if (!r) return;
+
+        const isActive = mode === activeMode;
+        const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5, r.cruisingSpeedKmh);
+        const gain = r.elevationGainM !== undefined ? r.elevationGainM : 5;
+        const loss = r.elevationLossM !== undefined ? r.elevationLossM : Math.max(2, Math.round(gain * 0.9));
+        const formattedDuration = this.formatDurationMinutes(r.durationMin);
+
+        const card = document.createElement('div');
+        card.className = `nav-drawer-route-card ${isActive ? 'is-active' : ''}`;
+        card.setAttribute('data-mode', mode);
+
+        card.innerHTML = `
+          <div class="nav-drawer-card-top">
+            <span class="nav-drawer-mode-title">
+              ${modeTitles[mode] || r.title}
+            </span>
+            ${isActive ? '<span class="nav-drawer-active-pill">EN COURS</span>' : ''}
+          </div>
+          <div class="nav-drawer-metrics">
+            <span class="nav-drawer-time">${formattedDuration}</span>
+            <span class="nav-drawer-dist">${r.distanceKm} km</span>
+          </div>
+          <div class="nav-drawer-elev-row">
+            <span>Dénivelé : <span class="elev-pos">+${gain}m</span> <span class="elev-neg">-${loss}m</span></span>
+            <span style="color: #64748b;">•</span>
+            <span>${r.protectedPct || 50}% pistes</span>
+          </div>
+          <div class="nav-drawer-card-bottom">
+            <span class="nav-drawer-batt">⚡ -${batt.consumedPct}% (${batt.whUsed} Wh)</span>
+            <button class="btn-nav-drawer-select" type="button">
+              ${isActive ? '✓ Itinéraire actuel' : 'Basculer ici ➔'}
+            </button>
+          </div>
+        `;
+
+        if (!isActive) {
+          card.addEventListener('click', () => {
+            this.switchNavigationRoute(mode);
+          });
+        }
+
+        this.elNavDrawerRoutesList.appendChild(card);
+      });
+    }
+
+    openNavRouteDrawer() {
+      if (!this.elNavRouteDrawer) return;
+      this.renderNavDrawerRoutesUI();
+      this.elNavRouteDrawer.style.display = 'flex';
+      requestAnimationFrame(() => {
+        this.elNavRouteDrawer.classList.add('drawer-open');
+        if (this.elNavRouteDrawerTab) this.elNavRouteDrawerTab.classList.add('tab-active');
+      });
+    }
+
+    closeNavRouteDrawer() {
+      if (!this.elNavRouteDrawer) return;
+      this.elNavRouteDrawer.classList.remove('drawer-open');
+      if (this.elNavRouteDrawerTab) this.elNavRouteDrawerTab.classList.remove('tab-active');
+      setTimeout(() => {
+        if (!this.elNavRouteDrawer.classList.contains('drawer-open')) {
+          this.elNavRouteDrawer.style.display = 'none';
+        }
+      }, 320);
+    }
+
+    toggleNavRouteDrawer() {
+      if (!this.elNavRouteDrawer) return;
+      if (this.elNavRouteDrawer.classList.contains('drawer-open')) {
+        this.closeNavRouteDrawer();
+      } else {
+        this.openNavRouteDrawer();
+      }
+    }
+
+    setupDraggableNavTab() {
+      const tab = this.elNavRouteDrawerTab;
+      if (!tab) return;
+
+      let isDragging = false;
+      let startX = 0, startY = 0;
+      let initialLeft = 0, initialTop = 0;
+      let pointerId = null;
+
+      tab.addEventListener('pointerdown', (e) => {
+        if (e.button !== 0 && e.pointerType === 'mouse') return;
+        pointerId = e.pointerId;
+        try { tab.setPointerCapture(pointerId); } catch (_) {}
+
+        isDragging = false;
+        startX = e.clientX;
+        startY = e.clientY;
+
+        const rect = tab.getBoundingClientRect();
+        initialLeft = rect.left;
+        initialTop = rect.top;
+
+        tab.classList.add('tab-pressing');
+      });
+
+      tab.addEventListener('pointermove', (e) => {
+        if (pointerId === null) return;
+        const dx = e.clientX - startX;
+        const dy = e.clientY - startY;
+
+        if (!isDragging && Math.hypot(dx, dy) > 6) {
+          isDragging = true;
+          tab.classList.remove('tab-pressing');
+          tab.classList.add('tab-dragging');
+        }
+
+        if (isDragging) {
+          const winW = window.innerWidth || document.documentElement.clientWidth || 400;
+          const winH = window.innerHeight || document.documentElement.clientHeight || 800;
+          const tabW = tab.offsetWidth || 40;
+          const tabH = tab.offsetHeight || 140;
+
+          let curX = initialLeft + dx;
+          let curY = initialTop + dy;
+
+          curX = Math.max(0, Math.min(winW - tabW, curX));
+          curY = Math.max(10, Math.min(winH - tabH - 10, curY));
+
+          tab.style.left = `${curX}px`;
+          tab.style.top = `${curY}px`;
+          tab.style.right = 'auto';
+          tab.style.transform = 'none';
+
+          if (curX < 60) {
+            tab.classList.add('snap-preview-left');
+            tab.classList.remove('snap-preview-right');
+          } else if (curX > winW - tabW - 60) {
+            tab.classList.add('snap-preview-right');
+            tab.classList.remove('snap-preview-left');
+          } else {
+            tab.classList.remove('snap-preview-left', 'snap-preview-right');
+          }
+        }
+      });
+
+      const handlePointerEnd = (e) => {
+        if (pointerId === null) return;
+        try { tab.releasePointerCapture(pointerId); } catch (_) {}
+        pointerId = null;
+
+        tab.classList.remove('tab-pressing', 'tab-dragging', 'snap-preview-left', 'snap-preview-right');
+
+        if (!isDragging) {
+          this.toggleNavRouteDrawer();
+        } else {
+          this.snapNavTabToOptimalEdge(tab.getBoundingClientRect());
+        }
+        isDragging = false;
+      };
+
+      tab.addEventListener('pointerup', handlePointerEnd);
+      tab.addEventListener('pointercancel', handlePointerEnd);
+
+      window.addEventListener('resize', () => {
+        if (this.navigationEngine && this.navigationEngine.isNavigating) {
+          this.repositionNavRouteDrawerTab();
+        }
+      });
+    }
+
+    snapNavTabToOptimalEdge(currentRect) {
+      const tab = this.elNavRouteDrawerTab;
+      if (!tab) return;
+
+      const winW = window.innerWidth || document.documentElement.clientWidth || 400;
+      const winH = window.innerHeight || document.documentElement.clientHeight || 800;
+      const tabH = tab.offsetHeight || 140;
+
+      // Closest side: Left or Right
+      const centerX = currentRect ? (currentRect.left + (currentRect.width || 40) / 2) : (winW - 20);
+      const isRightSide = centerX >= winW / 2;
+
+      // Vertical bounds: must stay safely below nav banner and above HUD
+      const navBanner = document.getElementById('nav-banner');
+      const minTop = (navBanner && navBanner.style.display !== 'none') ? Math.max(90, Math.round(navBanner.getBoundingClientRect().bottom + 12)) : 90;
+
+      const hud = document.getElementById('hud-dashboard');
+      const maxTop = (hud && hud.style.display !== 'none') ? Math.min(winH - tabH - 90, Math.round(hud.getBoundingClientRect().top - tabH - 12)) : (winH - tabH - 90);
+
+      let targetY = currentRect ? currentRect.top : 150;
+      targetY = Math.max(minTop, Math.min(maxTop, targetY));
+
+      if (isRightSide) {
+        // RIGHT SIDE: Check collisions with floating stack (.map-floating-stack buttons)
+        const stack = document.querySelector('.map-floating-stack');
+        if (stack && stack.offsetWidth > 0) {
+          const stackRect = stack.getBoundingClientRect();
+          const stackTop = stackRect.top - 12;
+          const stackBottom = stackRect.bottom + 12;
+
+          const tabTop = targetY;
+          const tabBottom = targetY + tabH;
+
+          // If tab would collide with or overlap the floating action buttons
+          if (tabBottom > stackTop && tabTop < stackBottom) {
+            const spaceAbove = stackTop - minTop;
+            const spaceBelow = maxTop - stackBottom;
+
+            if (spaceAbove >= tabH || spaceAbove >= spaceBelow) {
+              // Snap safely ABOVE the button stack (completely clear zone on the right edge)
+              targetY = Math.max(minTop, stackTop - tabH);
+            } else {
+              // Snap safely BELOW the button stack
+              targetY = Math.min(maxTop, stackBottom);
+            }
+          }
+        }
+
+        tab.style.transition = 'all 0.28s cubic-bezier(0.16, 1, 0.3, 1)';
+        tab.style.left = 'auto';
+        tab.style.right = '0px';
+        tab.style.top = `${Math.round(targetY)}px`;
+        tab.style.transform = 'none';
+        tab.classList.remove('dock-left');
+        tab.classList.add('dock-right');
+
+        try {
+          localStorage.setItem('trottiwaze_nav_tab_pos', JSON.stringify({
+            side: 'right',
+            topPct: Math.round((targetY / winH) * 100),
+            topPx: Math.round(targetY)
+          }));
+        } catch (_) {}
+
+      } else {
+        // LEFT SIDE: Pristine clear edge
+        tab.style.transition = 'all 0.28s cubic-bezier(0.16, 1, 0.3, 1)';
+        tab.style.left = '0px';
+        tab.style.right = 'auto';
+        tab.style.top = `${Math.round(targetY)}px`;
+        tab.style.transform = 'none';
+        tab.classList.remove('dock-right');
+        tab.classList.add('dock-left');
+
+        try {
+          localStorage.setItem('trottiwaze_nav_tab_pos', JSON.stringify({
+            side: 'left',
+            topPct: Math.round((targetY / winH) * 100),
+            topPx: Math.round(targetY)
+          }));
+        } catch (_) {}
+      }
+
+      setTimeout(() => {
+        if (tab) tab.style.transition = '';
+      }, 300);
+    }
+
+    restoreNavTabPosition() {
+      const tab = this.elNavRouteDrawerTab;
+      if (!tab) return;
+
+      const winH = window.innerHeight || 800;
+      let side = 'right';
+      let topY = Math.max(105, Math.round(winH * 0.18)); // Default clear spot above stack
+
+      try {
+        const saved = localStorage.getItem('trottiwaze_nav_tab_pos');
+        if (saved) {
+          const parsed = JSON.parse(saved);
+          if (parsed && (parsed.side === 'left' || parsed.side === 'right')) {
+            side = parsed.side;
+            if (parsed.topPct) {
+              topY = Math.round((parsed.topPct / 100) * winH);
+            } else if (parsed.topPx) {
+              topY = parsed.topPx;
+            }
+          }
+        }
+      } catch (_) {}
+
+      this.snapNavTabToOptimalEdge({
+        left: side === 'left' ? 0 : (window.innerWidth || 400) - 40,
+        top: topY,
+        width: 40
+      });
+    }
+
+    repositionNavRouteDrawerTab() {
+      const tab = this.elNavRouteDrawerTab;
+      if (!tab || tab.style.display === 'none') return;
+      this.snapNavTabToOptimalEdge(tab.getBoundingClientRect());
+    }
+
+    switchNavigationRoute(newMode) {
+      if (!this.calculatedRoutes || !this.calculatedRoutes[newMode]) return;
+      const newRoute = this.calculatedRoutes[newMode];
+      this.selectedRouteMode = newMode;
+
+      // Switch active route in navigation engine
+      if (this.navigationEngine && this.navigationEngine.isNavigating) {
+        this.navigationEngine.switchRoute(newRoute);
+      }
+
+      // Redraw route polyline with matching mode color
+      this.mapManager.drawRoute(newRoute.coordinates, newMode);
+
+      // Voice TTS feedback
+      const modeTitles = {
+        fast: 'Direct et Rapide',
+        safe: 'Sécurisé par pistes cyclables',
+        eco: 'Éco et Plat'
+      };
+      const title = modeTitles[newMode] || (newRoute.title || 'alternatif');
+      if (this.voiceEngine) {
+        this.voiceEngine.speak(`Itinéraire modifié : passage sur l'itinéraire ${title}.`, 'turn');
+      }
+
+      this.showToast(`🔀 Itinéraire modifié : ${title}`);
+
+      // Re-render drawer cards with updated active highlight
+      this.renderNavDrawerRoutesUI();
+
+      // Smoothly close drawer after brief feedback
+      setTimeout(() => {
+        this.closeNavRouteDrawer();
+      }, 350);
+    }
+
+    async recalcNavigationRouteFromGps() {
+      if (!this.selectedEndCoords) return;
+      let startCoords = null;
+      if (this.mapManager && this.mapManager.currentLocation) {
+        startCoords = {
+          lat: this.mapManager.currentLocation.lat,
+          lng: this.mapManager.currentLocation.lng
+        };
+      }
+      if (!startCoords && this.selectedStartCoords) {
+        startCoords = this.selectedStartCoords;
+      }
+      if (!startCoords) {
+        this.showToast('⚠️ Position GPS indisponible');
+        return;
+      }
+
+      this.showToast('🔄 Recalcul des itinéraires en cours...');
+      try {
+        const routes = await this.routingEngine.calculateRoutes(startCoords, this.selectedEndCoords);
+        if (routes && Object.keys(routes).length > 0) {
+          this.calculatedRoutes = routes;
+          const chosenMode = this.selectedRouteMode || 'fast';
+          const r = this.calculatedRoutes[chosenMode] || this.calculatedRoutes[Object.keys(routes)[0]];
+          if (r) {
+            if (this.navigationEngine && this.navigationEngine.isNavigating) {
+              this.navigationEngine.switchRoute(r);
+            }
+            this.mapManager.drawRoute(r.coordinates, chosenMode);
+            if (this.voiceEngine) {
+              this.voiceEngine.speak("Itinéraire recalculé depuis votre position.", 'turn');
+            }
+            this.showToast('✅ Itinéraires mis à jour avec succès');
+          }
+          this.renderNavDrawerRoutesUI();
+        }
+      } catch (err) {
+        console.error('Error recalculating route:', err);
+        this.showToast('⚠️ Erreur de recalcul');
+      }
     }
 
     updateRouteCardsUI() {
@@ -4999,11 +6467,20 @@
         const climbEl = document.getElementById(`rcw-climb-${mode}`);
         const pisteEl = document.getElementById(`rcw-piste-${mode}`);
 
-        if (timeEl) timeEl.textContent = `${r.durationMin} min`;
+        if (timeEl) timeEl.textContent = this.formatDurationMinutes(r.durationMin);
         if (distEl) distEl.textContent = `${r.distanceKm} km`;
-        if (climbEl) climbEl.textContent = `↗ +${r.elevationGainM}m (${r.maxSlopePct}%)`;
+        if (climbEl) {
+          const gain = r.elevationGainM !== undefined ? r.elevationGainM : 5;
+          const loss = r.elevationLossM !== undefined ? r.elevationLossM : Math.max(2, Math.round(gain * 0.9));
+          climbEl.innerHTML = `<span class="elev-pos">+${gain}m</span> <span class="elev-neg">-${loss}m</span>`;
+        }
         if (pisteEl) {
           pisteEl.textContent = `⚡ -${batt.consumedPct}% (${batt.whUsed} Wh)`;
+        }
+
+        const warnEl = document.getElementById(`rcw-warn-${mode}`);
+        if (warnEl) {
+          warnEl.style.display = r.hasSpeedOver50Warning ? 'inline-block' : 'none';
         }
       });
     }
@@ -5029,15 +6506,17 @@
       const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5, r.cruisingSpeedKmh);
 
       if (this.elLaunchButtonLabel) {
-        this.elLaunchButtonLabel.textContent = `DÉMARRER (${r.durationMin} MIN • ${r.distanceKm} KM • -${batt.consumedPct}%)`;
+        this.elLaunchButtonLabel.textContent = `DÉMARRER (${this.formatDurationMinutes(r.durationMin).toUpperCase()} • ${r.distanceKm} KM • -${batt.consumedPct}%)`;
       }
       if (this.elLaunchButtonSub) {
-        this.elLaunchButtonSub.textContent = `⚡ Conso : ${batt.whUsed} Wh • 🔌 Recharge ~${batt.rechargeTimeMin} min (230V) • ${r.protectedPct}% Pistes`;
+        this.elLaunchButtonSub.textContent = `⚡ Conso : ${batt.whUsed} Wh • ${r.protectedPct}% Pistes`;
       }
 
       const elevSummary = document.getElementById('elev-gain-summary');
       if (elevSummary) {
-        elevSummary.textContent = `${r.title} : +${r.elevationGainM}m montée (max ${r.maxSlopePct}%) • Conso ~${batt.whUsed} Wh • ${r.praticability}`;
+        const gain = r.elevationGainM !== undefined ? r.elevationGainM : 5;
+        const loss = r.elevationLossM !== undefined ? r.elevationLossM : Math.max(2, Math.round(gain * 0.9));
+        elevSummary.innerHTML = `<strong>${r.title}</strong> : Dénivelé <span class="elev-pos">+${gain}m</span> / <span class="elev-neg">-${loss}m</span> (max ${r.maxSlopePct}%) • ${r.praticability}`;
       }
 
       const now = new Date();
@@ -5045,7 +6524,7 @@
       const hh = String(etaDate.getHours()).padStart(2, '0');
       const mm = String(etaDate.getMinutes()).padStart(2, '0');
       if (this.elHudEta) this.elHudEta.textContent = `${hh}:${mm}`;
-      if (this.elHudTimeRem) this.elHudTimeRem.textContent = `${r.durationMin} min`;
+      if (this.elHudTimeRem) this.elHudTimeRem.textContent = this.formatDurationMinutes(r.durationMin);
       if (this.elHudDistRem) this.elHudDistRem.textContent = `${r.distanceKm} km`;
 
       if (this.elBatteryPercent) this.elBatteryPercent.textContent = `-${batt.consumedPct}%`;
@@ -5061,6 +6540,136 @@
           thermalTag.style.display = 'none';
         }
       }
+
+      // E-Scooter Regulatory Speed Warning (> 50 km/h)
+      const speedWarnBox = document.getElementById('waze-speed-warning-box');
+      const speedWarnText = document.getElementById('speed-warning-roads-text');
+      if (speedWarnBox) {
+        if (r.hasSpeedOver50Warning) {
+          speedWarnBox.style.display = 'flex';
+          if (speedWarnText) {
+            const detail = r.speedOver50Details ? ` (${r.speedOver50Details})` : '';
+            speedWarnText.textContent = `Axe limité à plus de 50 km/h détecté${detail}. Trottinette interdite hors piste cyclable (Code de la route R412-43-1). Roulez impérativement sur la piste protégée.`;
+          }
+        } else {
+          speedWarnBox.style.display = 'none';
+        }
+      }
+    }
+
+    openRidesHistoryModal() {
+      if (this.elSettingsModal) {
+        this.elSettingsModal.style.display = 'flex';
+        // Open Volet 5 (Mes Trajets Enregistrés)
+        const rideItem = document.getElementById('acc-item-rides');
+        if (rideItem) {
+          document.querySelectorAll('.accordion-item').forEach(it => it.classList.remove('open'));
+          rideItem.classList.add('open');
+          setTimeout(() => {
+            rideItem.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }, 100);
+        }
+        this.renderRidesHistoryUI();
+        this.updateAccordionSummaries();
+      }
+    }
+
+    renderRecentNavigationsUI() {
+      const container = document.getElementById('recent-nav-list');
+      const countBadge = document.getElementById('recent-nav-count-badge');
+      if (!container) return;
+
+      const recents = (this.historyManager && this.historyManager.recents) || [];
+      if (countBadge) countBadge.textContent = recents.length;
+
+      if (recents.length === 0) {
+        container.innerHTML = `
+          <div style="font-size: 11px; color: #64748b; padding: 6px 0; text-align: center;">
+            Aucune navigation récente
+          </div>
+        `;
+        return;
+      }
+
+      container.innerHTML = '';
+      recents.slice(0, 3).forEach(item => {
+        const row = document.createElement('div');
+        row.className = 'recent-nav-item';
+        row.innerHTML = `
+          <div class="recent-nav-info">
+            <span class="recent-nav-dest">📍 ${item.mainText || item.fullLabel}</span>
+            <span class="recent-nav-sub">${item.subText || ''}</span>
+          </div>
+          <span class="recent-nav-go">Go ➔</span>
+        `;
+        row.addEventListener('click', () => {
+          this.selectedEndCoords = { lat: item.lat, lng: item.lng };
+          this.elEndInput.value = item.fullLabel;
+          this.historyManager.addRecent(item);
+          this.calculateCurrentRoute();
+          this.showToast(`🚀 Destination : ${item.mainText || item.fullLabel}`);
+        });
+        container.appendChild(row);
+      });
+    }
+
+    saveCompletedNavTrip() {
+      if (!this.currentNavTrip) return;
+      const trip = this.currentNavTrip;
+      this.currentNavTrip = null;
+
+      const elapsedSec = Math.max(10, Math.round((Date.now() - trip.startTime) / 1000));
+      const distKm = trip.routeDistanceKm || 1.2;
+      const avgSpeed = elapsedSec > 0 ? (distKm / (elapsedSec / 3600)) : 18;
+      const maxSpd = trip.maxSpeed > 0 ? trip.maxSpeed : Math.min(25, avgSpeed * 1.25);
+
+      const pts = trip.recordedPoints.length > 0
+        ? trip.recordedPoints
+        : (trip.activeRoute && trip.activeRoute.coordinates
+            ? trip.activeRoute.coordinates.map(c => ({ lat: c[0], lng: c[1], alt: 35, speed: 18, time: Date.now() }))
+            : []);
+
+      const newRide = {
+        id: 'ride_' + Date.now(),
+        title: `${trip.startLabel} ➔ ${trip.destLabel}`,
+        date: new Date().toLocaleDateString('fr-FR', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }),
+        timestamp: Date.now(),
+        distanceKm: parseFloat(distKm.toFixed(2)),
+        durationSeconds: elapsedSec,
+        durationFormatted: this.rideRecorder.formatTime(elapsedSec),
+        avgSpeedKmh: parseFloat(Math.min(25, avgSpeed).toFixed(1)),
+        maxSpeedKmh: parseFloat(Math.min(30, maxSpd).toFixed(1)),
+        points: pts
+      };
+
+      this.rideRecorder.savedRides.unshift(newRide);
+      this.rideRecorder.saveRidesToStorage();
+      this.garageManager.addKmToActiveScooter(distKm);
+      this.authManager.updateUserStats(distKm, 1);
+      this.renderGarageFleetUI();
+      this.updateUserAuthUI();
+      this.updateAccordionSummaries();
+      this.renderRidesHistoryUI();
+      this.renderRecentNavigationsUI();
+    }
+
+    cancelRoutePresentation() {
+      this.selectedEndCoords = null;
+      this.calculatedRoutes = null;
+      if (this.elEndInput) this.elEndInput.value = '';
+      this.mapManager.clearRoute();
+      if (this.mapManager.destinationMarker) {
+        this.mapManager.map.removeLayer(this.mapManager.destinationMarker);
+        this.mapManager.destinationMarker = null;
+      }
+      if (this.elExpandableContent) this.elExpandableContent.style.display = 'none';
+      if (this.elStickyLaunchBar) this.elStickyLaunchBar.style.display = 'none';
+      if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
+      if (this.elRoutePanel) this.elRoutePanel.classList.remove('panel-compact');
+      if (this.mapManager.currentLocation) {
+        this.mapManager.recenter(16);
+      }
+      this.showToast('❌ Itinéraire annulé');
     }
 
     beginTrip(isSimulated = false) {
@@ -5081,11 +6690,54 @@
         btnVoice.classList.toggle('muted', !this.voiceEngine.config.enabled);
       }
 
+      // Regulatory Warning (> 50 km/h) Notification on trip launch
+      if (activeRoute.hasSpeedOver50Warning) {
+        this.showToast('⚠️ Attention : portion > 50 km/h sur cet itinéraire !');
+        if (this.voiceEngine && this.voiceEngine.config.enabled) {
+          this.voiceEngine.speak("Attention, cet itinéraire comporte des voies limitées à plus de 50 km/h. Privilégiez impérativement les pistes cyclables.", 'turn');
+        }
+      }
+
+      // Add to recent navigations immediately
+      if (this.elEndInput && this.elEndInput.value.trim().length > 0) {
+        const destLabel = this.elEndInput.value.trim();
+        const coords = this.selectedEndCoords || (activeRoute.coordinates ? { lat: activeRoute.coordinates[activeRoute.coordinates.length - 1][0], lng: activeRoute.coordinates[activeRoute.coordinates.length - 1][1] } : null);
+        if (coords) {
+          this.historyManager.addRecent({
+            fullLabel: destLabel,
+            lat: coords.lat,
+            lng: coords.lng,
+            type: 'history'
+          });
+          this.renderRecentNavigationsUI();
+        }
+      }
+
+      // Initialize navigation trip recording
+      this.currentNavTrip = {
+        startTime: Date.now(),
+        startLabel: (this.elStartInput && this.elStartInput.value.trim()) || 'Départ',
+        destLabel: (this.elEndInput && this.elEndInput.value.trim()) || 'Destination',
+        routeDistanceKm: activeRoute.distanceKm || 0,
+        activeRoute: activeRoute,
+        recordedPoints: [],
+        speeds: [],
+        maxSpeed: 0
+      };
+
       this.navigationEngine.startNavigation(activeRoute, isSimulated);
+      if (this.elNavRouteDrawerTab) {
+        this.elNavRouteDrawerTab.style.display = 'flex';
+        this.restoreNavTabPosition();
+      }
+      this.renderNavDrawerRoutesUI();
     }
 
     endTrip() {
+      this.saveCompletedNavTrip();
       this.navigationEngine.stopNavigation();
+      if (this.elNavRouteDrawerTab) this.elNavRouteDrawerTab.style.display = 'none';
+      this.closeNavRouteDrawer();
       if (this.elRoutePanel) this.elRoutePanel.style.display = 'block';
       this.elNavBanner.style.display = 'none';
       this.elSimuController.style.display = 'none';
@@ -5099,22 +6751,24 @@
         if (this.elHudTimeRem) this.elHudTimeRem.textContent = '-- min';
         if (this.elHudDistRem) this.elHudDistRem.textContent = '-- km';
       }
+      this.renderRecentNavigationsUI();
+      this.renderRidesHistoryUI();
     }
 
     handleArrival() {
-      if (this.navigationEngine && this.navigationEngine.activeRoute && this.navigationEngine.activeRoute.distanceKm) {
-        const km = this.navigationEngine.activeRoute.distanceKm;
-        this.garageManager.addKmToActiveScooter(km);
-        this.authManager.updateUserStats(km, 1);
-        this.renderGarageFleetUI();
-        this.updateUserAuthUI();
-      }
+      this.saveCompletedNavTrip();
       this.voiceEngine.speak("Vous êtes arrivé à destination.", 'turn');
-      this.showToast('🎉 Arrivée à destination !');
+      this.showToast('🎉 Arrivée à destination ! Navigation enregistrée.');
       setTimeout(() => this.endTrip(), 4000);
     }
 
     handleSpeedUpdate(speedKmh) {
+      if (this.currentNavTrip && speedKmh > 0) {
+        this.currentNavTrip.speeds.push(speedKmh);
+        if (speedKmh > this.currentNavTrip.maxSpeed) {
+          this.currentNavTrip.maxSpeed = speedKmh;
+        }
+      }
       if (this.cockpitHUD) {
         this.cockpitHUD.updateSpeed(speedKmh);
       }
@@ -5159,6 +6813,17 @@
         this.elNavSafety.style.display = 'none';
       }
 
+      const stepWarn = document.getElementById('nav-step-speed-warning');
+      if (stepWarn) {
+        stepWarn.style.display = step.isOver50 ? 'inline-block' : 'none';
+      }
+      if (step.isOver50 && !step._spokenWarn) {
+        step._spokenWarn = true;
+        if (this.voiceEngine && this.voiceEngine.config.enabled) {
+          this.voiceEngine.speak("Axe limité à plus de 50 km/h.", 'turn');
+        }
+      }
+
       const icons = {
         right: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 19V9a4 4 0 0 1 4-4h10"/><polyline points="15 9 19 5 15 1"/></svg>',
         left: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M19 19V9a4 4 0 0 0-4-4H5"/><polyline points="9 9 5 5 9 1"/></svg>',
@@ -5175,7 +6840,7 @@
       const remMin = trip.remainingMin !== undefined ? trip.remainingMin : 0;
       const remDist = trip.remainingDistKm !== undefined ? trip.remainingDistKm : '0.0';
 
-      if (this.elHudTimeRem) this.elHudTimeRem.textContent = `${remMin} min`;
+      if (this.elHudTimeRem) this.elHudTimeRem.textContent = this.formatDurationMinutes(remMin);
       if (this.elHudDistRem) this.elHudDistRem.textContent = `${remDist} km`;
 
       // Real-time Arrival Clock Time (ETA)
