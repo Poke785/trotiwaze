@@ -18,7 +18,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
   
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=4">
 </head>
 <body class="theme-dark">
   <div id="app-container">
@@ -166,69 +166,31 @@
       </div>
 
       <div id="waze-sheet-body" class="waze-sheet-body">
-        <!-- 3 Route Cards Side-by-Side (Zero Scroll) -->
-        <div id="route-modes" class="route-modes-3">
-          <!-- Route 1: Fast -->
-          <div class="route-card-waze active" data-mode="fast">
-            <div class="rcw-badge fast-badge">⚡ Direct</div>
-            <div class="rcw-speed-warn" id="rcw-warn-fast" style="display: none;">⚠️ &gt; 50 km/h</div>
-            <div class="rcw-time" id="rcw-time-fast">– min</div>
-            <div class="rcw-dist" id="rcw-dist-fast">– km</div>
-            <div class="rcw-climb" id="rcw-climb-fast"><span class="elev-pos">+22m</span> <span class="elev-neg">-18m</span></div>
-            <div class="rcw-piste" id="rcw-piste-fast">56% pistes</div>
-            <div class="rcw-bar">
-              <span class="rcw-seg green" style="width:56%"></span>
-              <span class="rcw-seg blue" style="width:28%"></span>
-              <span class="rcw-seg yellow" style="width:16%"></span>
-            </div>
+        <!-- Hidden elements for data-binding backward compatibility -->
+        <div id="route-modes" style="display: none !important;">
+          <div class="route-card-waze route-tab-pill active" data-mode="fast">
+            <span id="rcw-time-fast"></span><span id="rcw-climb-fast"></span><span id="rcw-warn-fast"></span><span id="rcw-dist-fast"></span><span id="rcw-piste-fast"></span>
           </div>
-          <!-- Route 2: Safe -->
-          <div class="route-card-waze" data-mode="safe">
-            <div class="rcw-badge safe-badge">🟢 Sécurisé</div>
-            <div class="rcw-speed-warn" id="rcw-warn-safe" style="display: none;">⚠️ &gt; 50 km/h</div>
-            <div class="rcw-time" id="rcw-time-safe">– min</div>
-            <div class="rcw-dist" id="rcw-dist-safe">– km</div>
-            <div class="rcw-climb" id="rcw-climb-safe"><span class="elev-pos">+12m</span> <span class="elev-neg">-10m</span></div>
-            <div class="rcw-piste" id="rcw-piste-safe">92% pistes</div>
-            <div class="rcw-bar">
-              <span class="rcw-seg green" style="width:92%"></span>
-              <span class="rcw-seg blue" style="width:6%"></span>
-              <span class="rcw-seg yellow" style="width:2%"></span>
-            </div>
+          <div class="route-card-waze route-tab-pill" data-mode="safe">
+            <span id="rcw-time-safe"></span><span id="rcw-climb-safe"></span><span id="rcw-warn-safe"></span><span id="rcw-dist-safe"></span><span id="rcw-piste-safe"></span>
           </div>
-          <!-- Route 3: Eco -->
-          <div class="route-card-waze" data-mode="eco">
-            <div class="rcw-badge eco-badge">🔋 Éco &amp; Plat</div>
-            <div class="rcw-speed-warn" id="rcw-warn-eco" style="display: none;">⚠️ &gt; 50 km/h</div>
-            <div class="rcw-time" id="rcw-time-eco">– min</div>
-            <div class="rcw-dist" id="rcw-dist-eco">– km</div>
-            <div class="rcw-climb" id="rcw-climb-eco"><span class="elev-pos">+3m</span> <span class="elev-neg">-3m</span></div>
-            <div class="rcw-piste" id="rcw-piste-eco">Contourne relief</div>
-            <div class="rcw-bar">
-              <span class="rcw-seg green" style="width:88%"></span>
-              <span class="rcw-seg blue" style="width:10%"></span>
-              <span class="rcw-seg yellow" style="width:2%"></span>
-            </div>
+          <div class="route-card-waze route-tab-pill" data-mode="eco">
+            <span id="rcw-time-eco"></span><span id="rcw-climb-eco"></span><span id="rcw-warn-eco"></span><span id="rcw-dist-eco"></span><span id="rcw-piste-eco"></span>
           </div>
         </div>
+        <span id="elev-end-dist" style="display:none;"></span>
 
-        <!-- Elevation & Relief Info Pill -->
-        <div class="waze-sheet-elevation-pill" id="waze-elevation-pill">
-          <span id="elev-gain-summary">📈 Dénivelé calculé selon l'itinéraire</span>
-          <span id="elev-end-dist" style="display:none;"></span>
+        <!-- Compact Speed Limit Warning (> 50 km/h) Badge (Discret mais clair) -->
+        <div class="waze-speed-warning-compact" id="waze-speed-warning-box" style="display: none;">
+          <span class="speed-warning-icon-sm">⚠️</span>
+          <span class="speed-warning-text-sm" id="speed-warning-roads-text">Voie &gt; 50 km/h détectée • Restez sur les pistes cyclables</span>
         </div>
 
-        <!-- Speed Limit Warning (> 50 km/h) Banner for E-Scooters -->
-        <div class="waze-speed-warning-box" id="waze-speed-warning-box" style="display: none;">
-          <span class="speed-warning-icon">⚠️</span>
-          <div class="speed-warning-content">
-            <span class="speed-warning-title">Prévention : Voie à plus de 50 km/h détectée</span>
-            <span class="speed-warning-desc" id="speed-warning-roads-text">Cet itinéraire comporte des voies à circulation rapide. Privilégiez les pistes cyclables et redoublez de prudence.</span>
-          </div>
-        </div>
-
-        <!-- Action Launch Buttons -->
+        <!-- Action Launch Buttons (Annuler & Démarrer) -->
         <div class="waze-sheet-actions">
+          <button id="btn-cancel-route" class="btn-launch-cancel" title="Annuler et fermer la présentation d'itinéraire">
+            ❌ Annuler
+          </button>
           <button id="btn-start-nav" class="btn-launch-primary">
             <span class="launch-icon">🚀</span>
             <div class="launch-text-box">
@@ -238,9 +200,6 @@
           </button>
           <button id="btn-start-simu" class="btn-launch-secondary" title="Simuler l'itinéraire">
             🎮 Démo
-          </button>
-          <button id="btn-cancel-route" class="btn-launch-cancel" title="Annuler et fermer la présentation d'itinéraire">
-            ❌ Annuler
           </button>
         </div>
       </div>
@@ -1531,6 +1490,6 @@
   </div> <!-- /#app-container -->
 
   <!-- Scripts -->
-  <script src="bundle.js"></script>
+  <script src="bundle.js?v=4"></script>
 </body>
 </html>

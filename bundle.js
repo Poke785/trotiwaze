@@ -1859,6 +1859,9 @@
       this.map = null;
       this.scooterMarker = null;
       this.routePolylines = [];
+      this.routeBadges = [];
+      this.startMarker = null;
+      this.endMarker = null;
       this.liveRecordPolyline = null;
       this.pastRidePolyline = null;
       this.currentLayerId = 'waze';
@@ -2357,6 +2360,156 @@
       this.fitRouteOverview(coordinates);
     }
 
+    drawAllRoutes(routesObj, selectedMode = 'safe', onSelectCallback = null) {
+      this.clearRoute();
+      if (!routesObj || Object.keys(routesObj).length === 0) return;
+
+      const modes = Object.keys(routesObj);
+      const colorSchemes = {
+        fast: { stroke: '#3b82f6', glow: 'rgba(59,130,246,0.40)', inactive: '#60a5fa', icon: '⚡' },
+        safe: { stroke: '#10b981', glow: 'rgba(16,185,129,0.40)', inactive: '#34d399', icon: '🟢' },
+        eco:  { stroke: '#f59e0b', glow: 'rgba(245,158,11,0.40)', inactive: '#fbbf24', icon: '🔋' }
+      };
+
+      // 1. Dessiner d'abord les routes secondaires (non sélectionnées)
+      const inactiveModes = modes.filter(m => m !== selectedMode);
+      inactiveModes.forEach(mode => {
+        const r = routesObj[mode];
+        if (!r || !r.coordinates || r.coordinates.length < 2) return;
+        const scheme = colorSchemes[mode] || { stroke: '#94a3b8', glow: 'transparent', inactive: '#94a3b8', icon: '📍' };
+
+        const casing = L.polyline(r.coordinates, {
+          color: 'rgba(15, 23, 42, 0.75)',
+          weight: 7,
+          opacity: 0.85,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(this.map);
+
+        const line = L.polyline(r.coordinates, {
+          color: scheme.inactive,
+          weight: 4.5,
+          opacity: 0.65,
+          lineCap: 'round',
+          lineJoin: 'round',
+          className: 'route-line-alt'
+        }).addTo(this.map);
+
+        line.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (onSelectCallback) onSelectCallback(mode);
+        });
+        line.on('mouseover', () => {
+          line.setStyle({ opacity: 1.0, weight: 6 });
+        });
+        line.on('mouseout', () => {
+          line.setStyle({ opacity: 0.65, weight: 4.5 });
+        });
+
+        this.routePolylines.push(casing, line);
+      });
+
+      // 2. Dessiner l'itinéraire sélectionné au premier plan (vibrant et éclatant)
+      const activeRoute = routesObj[selectedMode] || routesObj[modes[0]];
+      if (activeRoute && activeRoute.coordinates && activeRoute.coordinates.length >= 2) {
+        const scheme = colorSchemes[selectedMode] || colorSchemes.safe;
+
+        const glowLine = L.polyline(activeRoute.coordinates, {
+          color: scheme.glow,
+          weight: 16,
+          opacity: 0.95,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(this.map);
+
+        const casingLine = L.polyline(activeRoute.coordinates, {
+          color: 'rgba(13, 17, 23, 0.92)',
+          weight: 9,
+          opacity: 1.0,
+          lineCap: 'round',
+          lineJoin: 'round'
+        }).addTo(this.map);
+
+        const mainLine = L.polyline(activeRoute.coordinates, {
+          color: scheme.stroke,
+          weight: 6.5,
+          opacity: 1.0,
+          lineCap: 'round',
+          lineJoin: 'round',
+          className: 'route-line-active'
+        }).addTo(this.map);
+
+        this.routePolylines.push(glowLine, casingLine, mainLine);
+      }
+
+      // 3. Badges interactifs directement sur chaque tracé (Temps + Dénivelé)
+      const badgeRatios = { fast: 0.36, safe: 0.50, eco: 0.64 };
+      modes.forEach(mode => {
+        const r = routesObj[mode];
+        if (!r || !r.coordinates || r.coordinates.length < 2) return;
+        const isSel = (mode === selectedMode);
+        const ratio = badgeRatios[mode] || 0.50;
+        const idx = Math.min(r.coordinates.length - 1, Math.max(0, Math.floor(r.coordinates.length * ratio)));
+        const badgePt = r.coordinates[idx];
+        const gain = r.elevationGainM !== undefined ? r.elevationGainM : 5;
+        const icon = (colorSchemes[mode] && colorSchemes[mode].icon) || '🛴';
+
+        const badgeHtml = `
+          <div class="map-route-pill ${isSel ? 'active' : 'inactive'} mode-${mode}" title="Choisir : ${r.title}">
+            <span class="mrp-icon">${icon}</span>
+            <span class="mrp-time">${r.durationMin} min</span>
+            <span class="mrp-climb">+${gain}m</span>
+            ${r.hasSpeedOver50Warning ? '<span class="mrp-warn" title="Portion > 50 km/h">⚠️</span>' : ''}
+          </div>
+        `;
+
+        const badgeMarker = L.marker(badgePt, {
+          icon: L.divIcon({
+            className: 'map-route-pill-container',
+            html: badgeHtml,
+            iconSize: isSel ? [110, 32] : [94, 28],
+            iconAnchor: isSel ? [55, 16] : [47, 14]
+          }),
+          zIndexOffset: isSel ? 2000 : 800
+        }).addTo(this.map);
+
+        badgeMarker.on('click', (e) => {
+          L.DomEvent.stopPropagation(e);
+          if (onSelectCallback) onSelectCallback(mode);
+        });
+
+        if (!this.routeBadges) this.routeBadges = [];
+        this.routeBadges.push(badgeMarker);
+      });
+
+      // 4. Marqueurs de départ et d'arrivée
+      if (activeRoute && activeRoute.coordinates && activeRoute.coordinates.length >= 2) {
+        const startPt = activeRoute.coordinates[0];
+        const endPt = activeRoute.coordinates[activeRoute.coordinates.length - 1];
+
+        const startIcon = L.divIcon({
+          className: 'route-point-marker',
+          html: '<div style="background:#10b981; width:22px; height:22px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 10px rgba(16,185,129,0.8); display:flex; align-items:center; justify-content:center; color:#fff; font-size:11px; font-weight:bold;">🟢</div>',
+          iconSize: [22, 22],
+          iconAnchor: [11, 11]
+        });
+        const endIcon = L.divIcon({
+          className: 'route-point-marker',
+          html: '<div style="background:#ef4444; width:26px; height:26px; border-radius:50%; border:3px solid #fff; box-shadow:0 0 14px rgba(239,68,68,0.85); display:flex; align-items:center; justify-content:center; color:#fff; font-size:12px; font-weight:bold;">🏁</div>',
+          iconSize: [26, 26],
+          iconAnchor: [13, 13]
+        });
+
+        if (this.startMarker) this.map.removeLayer(this.startMarker);
+        if (this.endMarker) this.map.removeLayer(this.endMarker);
+
+        this.startMarker = L.marker(startPt, { icon: startIcon, zIndexOffset: 2500 }).addTo(this.map);
+        this.endMarker = L.marker(endPt, { icon: endIcon, zIndexOffset: 2500 }).addTo(this.map);
+      }
+
+      this.fitRouteOverview(activeRoute.coordinates);
+    }
+
     fitRouteOverview(coordinates) {
       if (!coordinates || coordinates.length === 0) return;
       this._applyFitBounds(coordinates);
@@ -2408,14 +2561,14 @@
       const winW = window.innerWidth || document.documentElement.clientWidth || 400;
       const isMobile = winW < 768;
 
-      // 3. Occlusion inférieure réaliste (Sheet + HUD)
-      // Sur mobile, le volet fait ~240px. Sur grand écran, il est centré et ne bloque pas les côtés.
-      let bottomPad = isMobile ? 240 : 200;
+      // 3. Occlusion inférieure réaliste (Barre d'action ultra-compacte : DÉMARRER + ANNULER)
+      // Le volet ne mesure plus que ~85px de haut. La carte est complètement dégagée.
+      let bottomPad = isMobile ? 95 : 85;
       if (routeSheet && routeSheet.style.display !== 'none') {
         const sheetRect = routeSheet.getBoundingClientRect();
         if (sheetRect.top > 0 && sheetRect.top < winH) {
           const visibleSheetH = winH - sheetRect.top;
-          bottomPad = Math.max(160, Math.min(Math.round(winH * 0.40), Math.round(visibleSheetH + 15)));
+          bottomPad = Math.max(75, Math.min(Math.round(winH * 0.22), Math.round(visibleSheetH + 10)));
         }
       } else if (hudDash && hudDash.style.display !== 'none') {
         bottomPad = Math.max(70, Math.round(winH * 0.12));
@@ -2496,8 +2649,22 @@
     }
 
     clearRoute() {
-      this.routePolylines.forEach(layer => this.map.removeLayer(layer));
-      this.routePolylines = [];
+      if (this.routePolylines) {
+        this.routePolylines.forEach(layer => this.map.removeLayer(layer));
+        this.routePolylines = [];
+      }
+      if (this.routeBadges) {
+        this.routeBadges.forEach(badge => this.map.removeLayer(badge));
+        this.routeBadges = [];
+      }
+      if (this.startMarker) {
+        this.map.removeLayer(this.startMarker);
+        this.startMarker = null;
+      }
+      if (this.endMarker) {
+        this.map.removeLayer(this.endMarker);
+        this.endMarker = null;
+      }
     }
   }
 
@@ -6738,19 +6905,26 @@
       }
       if (!r) return;
 
-      // Update active highlight class on cards
+      // Update active highlight class on cards / tabs
       document.querySelectorAll('.route-card-waze').forEach(c => {
         c.classList.toggle('active', c.getAttribute('data-mode') === this.selectedRouteMode);
       });
-      this.mapManager.drawRoute(r.coordinates, this.selectedRouteMode);
+
+      // Superposition visuelle de tous les itinéraires sur la carte avec badges temps + dénivelé
+      this.mapManager.drawAllRoutes(this.calculatedRoutes, this.selectedRouteMode, (newMode) => {
+        if (newMode && newMode !== this.selectedRouteMode) {
+          this.selectedRouteMode = newMode;
+          this.applySelectedRoute();
+        }
+      });
 
       const batt = this.batteryEngine.estimateTrip(r.distanceKm, r.elevationGainM || 5, r.elevationLossM || 5, r.cruisingSpeedKmh);
 
       if (this.elLaunchButtonLabel) {
-        this.elLaunchButtonLabel.textContent = `DÉMARRER (${this.formatDurationMinutes(r.durationMin).toUpperCase()} • ${r.distanceKm} KM • -${batt.consumedPct}%)`;
+        this.elLaunchButtonLabel.textContent = `DÉMARRER`;
       }
       if (this.elLaunchButtonSub) {
-        this.elLaunchButtonSub.textContent = `⚡ Conso : ${batt.whUsed} Wh • ${r.protectedPct}% Pistes`;
+        this.elLaunchButtonSub.textContent = `${this.formatDurationMinutes(r.durationMin)} • ${r.distanceKm} km • -${batt.consumedPct}% batt`;
       }
 
       const elevSummary = document.getElementById('elev-gain-summary');
@@ -6782,15 +6956,15 @@
         }
       }
 
-      // E-Scooter Regulatory Speed Warning (> 50 km/h)
+      // E-Scooter Regulatory Speed Warning (> 50 km/h) — Petit mais très clair
       const speedWarnBox = document.getElementById('waze-speed-warning-box');
       const speedWarnText = document.getElementById('speed-warning-roads-text');
       if (speedWarnBox) {
         if (r.hasSpeedOver50Warning) {
           speedWarnBox.style.display = 'flex';
           if (speedWarnText) {
-            const detail = r.speedOver50Details ? ` (${r.speedOver50Details})` : '';
-            speedWarnText.textContent = `Attention : portion limitée à plus de 50 km/h sur cet itinéraire${detail}. Pour votre sécurité, privilégiez les pistes cyclables et roulez avec prudence.`;
+            const detail = r.speedOver50Details ? ` : ${r.speedOver50Details}` : '';
+            speedWarnText.textContent = `Voie > 50 km/h${detail} • Restez sur les pistes cyclables`;
           }
         } else {
           speedWarnBox.style.display = 'none';
