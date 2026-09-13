@@ -222,8 +222,8 @@
         <div class="waze-speed-warning-box" id="waze-speed-warning-box" style="display: none;">
           <span class="speed-warning-icon">⚠️</span>
           <div class="speed-warning-content">
-            <span class="speed-warning-title">Axe limité à plus de 50 km/h détecté</span>
-            <span class="speed-warning-desc" id="speed-warning-roads-text">Interdit aux trottinettes hors piste cyclable (R412-43-1). Roulez impérativement sur la piste protégée.</span>
+            <span class="speed-warning-title">Prévention : Voie à plus de 50 km/h détectée</span>
+            <span class="speed-warning-desc" id="speed-warning-roads-text">Cet itinéraire comporte des voies à circulation rapide. Privilégiez les pistes cyclables et redoublez de prudence.</span>
           </div>
         </div>
 
@@ -741,7 +741,7 @@
                     <span class="filter-card-icon">⛔</span>
                     <div>
                       <div class="filter-card-title" style="color: #f87171;">Autoroutes &amp; Voies Rapides Strictement Interdites</div>
-                      <div class="filter-card-desc">Exclut 100% des autoroutes (A1-A999), voies rapides, rocades et périphériques (Code de la route R412-43-1)</div>
+                      <div class="filter-card-desc">Exclut 100% des autoroutes (A1-A999), voies rapides, rocades et périphériques pour votre sécurité</div>
                     </div>
                   </div>
                   <span class="safety-badge-locked" style="font-size: 11px; font-weight: 800; color: #f87171; background: rgba(239, 68, 68, 0.2); padding: 4px 8px; border-radius: 8px;">VERROUILLÉ</span>
@@ -1486,6 +1486,42 @@
             </button>
             <button type="button" id="btn-cancel-delete-landmark" class="btn-secondary" style="flex: 1; padding: 11px; border-radius: 12px; font-weight: 600; font-size: 13px;">
               Annuler
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Prévention Sécurité (> 50 km/h) avant de valider l'itinéraire -->
+    <div id="speed-prevention-modal" class="modal-backdrop modal-backdrop-transparent" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 410px; text-align: center;">
+        <div class="modal-header" style="justify-content: center; position: relative;">
+          <div class="modal-title-box">
+            <div class="modal-title" style="color: #fbbf24; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span>⚠️</span> Rappel de Sécurité
+            </div>
+            <div class="modal-subtitle" id="speed-prevention-roads-subtitle">Voies à circulation rapide détectées</div>
+          </div>
+          <button id="btn-close-speed-prevention" class="icon-btn" style="position: absolute; right: 12px; top: 12px;">✕</button>
+        </div>
+        <div style="padding: 16px;">
+          <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 14px; line-height: 1.5; text-align: left;">
+            Cet itinéraire comporte des portions où les véhicules roulent à plus de <strong>50 km/h</strong> (<span id="speed-prevention-road-names" style="color: #fde68a; font-weight: 600;">axes rapides</span>).
+          </p>
+          <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 10px 12px; text-align: left; margin-bottom: 18px; font-size: 12px; color: #fef08a; line-height: 1.45;">
+            💡 <strong>Conseils pour votre trajet :</strong>
+            <ul style="margin: 6px 0 0 16px; padding: 0;">
+              <li>Privilégiez impérativement les pistes ou bandes cyclables.</li>
+              <li>Redoublez de prudence aux carrefours et sorties.</li>
+              <li>Vous pouvez aussi choisir l'itinéraire <strong>🟢 Sécurisé (Pistes)</strong>.</li>
+            </ul>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button type="button" id="btn-prevention-confirm-start" class="btn-primary" style="padding: 12px; border-radius: 12px; font-weight: 700; font-size: 13px; background: #10b981; border: none; cursor: pointer; color: white;">
+              🚀 Compris, démarrer la navigation
+            </button>
+            <button type="button" id="btn-prevention-change-route" class="btn-secondary" style="padding: 10px; border-radius: 12px; font-weight: 600; font-size: 12.5px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06); color: #cbd5e1; cursor: pointer;">
+              ↩️ Choisir un autre itinéraire
             </button>
           </div>
         </div>

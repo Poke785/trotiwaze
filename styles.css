@@ -4930,6 +4930,7 @@ body.nav-head-up-active #map {
    ========================================================================== */
 #itinerary-confirm-modal,
 #landmark-delete-modal,
+#speed-prevention-modal,
 .modal-backdrop-transparent {
   background: transparent !important;
   backdrop-filter: none !important;
@@ -4940,6 +4941,10 @@ body.nav-head-up-active #map {
   pointer-events: auto !important;
 }
 
+#speed-prevention-modal {
+  z-index: 4000 !important;
+}
+
 #itinerary-confirm-modal .modal-card,
 #landmark-delete-modal .modal-card,
 .modal-backdrop-transparent .modal-card {
@@ -4948,6 +4953,17 @@ body.nav-head-up-active #map {
   -webkit-backdrop-filter: blur(20px) !important;
   border: 1px solid rgba(255, 255, 255, 0.2) !important;
   box-shadow: 0 20px 50px rgba(0, 0, 0, 0.65), 0 0 0 1px rgba(255, 255, 255, 0.08) !important;
+  border-radius: 20px !important;
+  margin: auto !important;
+  animation: popInModal 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;
+}
+
+#speed-prevention-modal .modal-card {
+  background: rgba(15, 23, 42, 0.96) !important;
+  backdrop-filter: blur(24px) !important;
+  -webkit-backdrop-filter: blur(24px) !important;
+  border: 1.5px solid rgba(251, 191, 36, 0.45) !important;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.85), 0 0 25px rgba(245, 158, 11, 0.2) !important;
   border-radius: 20px !important;
   margin: auto !important;
   animation: popInModal 0.22s cubic-bezier(0.34, 1.56, 0.64, 1) forwards;

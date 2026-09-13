@@ -1890,6 +1890,8 @@
       this.map = L.map(this.containerId, {
         center: this.defaultCenter,
         zoom: 15,
+        zoomSnap: 0.25,
+        zoomDelta: 0.5,
         zoomControl: false,
         attributionControl: false,
         preferCanvas: true
@@ -2370,8 +2372,32 @@
       if (!coordinates || coordinates.length === 0 || !this.map) return;
       this.map.invalidateSize();
 
-      // Geographic padding: expand bounds by 8% so start/dest markers & bends have breathing room
-      const bounds = L.latLngBounds(coordinates).pad(0.08);
+      // 1. Calcul précis de la distance réelle du tracé (en km)
+      let distKm = 0;
+      for (let i = 0; i < coordinates.length - 1; i++) {
+        const pA = L.latLng(coordinates[i]);
+        const pB = L.latLng(coordinates[i + 1]);
+        distKm += pA.distanceTo(pB) / 1000;
+      }
+      if (!distKm || distKm <= 0) {
+        const p1 = L.latLng(coordinates[0]);
+        const p2 = L.latLng(coordinates[coordinates.length - 1]);
+        distKm = p1.distanceTo(p2) / 1000 || 1;
+      }
+
+      // 2. Padding géographique adaptatif selon l'envergure du trajet
+      // (Évite d'ajouter un vide gigantesque autour des trajets courts et moyens)
+      let geoPadPct = 0.03;
+      if (distKm < 2.0) {
+        geoPadPct = 0.02; // Très court : cadrage direct et précis
+      } else if (distKm <= 6.0) {
+        geoPadPct = 0.03; // Moyen (2-6 km) : pas de vide inutile autour
+      } else if (distKm <= 12.0) {
+        geoPadPct = 0.045; // Moyen-long (6-12 km)
+      } else {
+        geoPadPct = 0.06; // Long (> 12 km)
+      }
+      const bounds = L.latLngBounds(coordinates).pad(geoPadPct);
 
       const routeSheet = document.getElementById('waze-route-sheet');
       const routePanel = document.getElementById('route-panel');
@@ -2380,54 +2406,93 @@
 
       const winH = window.innerHeight || document.documentElement.clientHeight || 800;
       const winW = window.innerWidth || document.documentElement.clientWidth || 400;
+      const isMobile = winW < 768;
 
-      // Dynamic bottom occlusion (Sheet + HUD)
-      let bottomPad = 380;
+      // 3. Occlusion inférieure réaliste (Sheet + HUD)
+      // Sur mobile, le volet fait ~240px. Sur grand écran, il est centré et ne bloque pas les côtés.
+      let bottomPad = isMobile ? 240 : 200;
       if (routeSheet && routeSheet.style.display !== 'none') {
         const sheetRect = routeSheet.getBoundingClientRect();
         if (sheetRect.top > 0 && sheetRect.top < winH) {
-          bottomPad = Math.max(370, Math.round(winH - sheetRect.top + 45));
-        } else {
-          bottomPad = 380;
+          const visibleSheetH = winH - sheetRect.top;
+          bottomPad = Math.max(160, Math.min(Math.round(winH * 0.40), Math.round(visibleSheetH + 15)));
         }
       } else if (hudDash && hudDash.style.display !== 'none') {
-        const hudRect = hudDash.getBoundingClientRect();
-        bottomPad = Math.max(120, Math.round(winH - hudRect.top + 30));
+        bottomPad = Math.max(70, Math.round(winH * 0.12));
       }
 
-      // Dynamic top occlusion (Route panel)
-      let topPad = 135;
+      // Occlusion supérieure (Recherche compacte)
+      let topPad = 50;
       if (routePanel && routePanel.style.display !== 'none') {
         const panelRect = routePanel.getBoundingClientRect();
         if (panelRect.bottom > 0) {
-          topPad = Math.max(125, Math.round(panelRect.bottom + 35));
+          topPad = Math.max(50, Math.min(Math.round(winH * 0.18), Math.round(panelRect.bottom + 12)));
         }
       }
 
-      // Dynamic right occlusion (Avoid floating action stack buttons)
-      let rightPad = 85;
-      if (floatingStack && floatingStack.offsetWidth > 0) {
+      // Occlusion latérale
+      let rightPad = isMobile ? 16 : 60;
+      if (floatingStack && floatingStack.offsetWidth > 0 && !isMobile) {
         const stackRect = floatingStack.getBoundingClientRect();
         if (stackRect.left > 0 && stackRect.left < winW) {
-          rightPad = Math.max(80, Math.round(winW - stackRect.left + 25));
+          rightPad = Math.max(50, Math.round(winW - stackRect.left + 15));
         }
       }
 
-      // Left occlusion margin
-      let leftPad = 55;
-      if (routePanel && routePanel.style.display !== 'none' && winW > 768) {
+      let leftPad = isMobile ? 16 : 40;
+      if (!isMobile && routePanel && routePanel.style.display !== 'none') {
         const panelRect = routePanel.getBoundingClientRect();
-        if (panelRect.left < 50 && panelRect.width < winW * 0.6) {
-          leftPad = Math.max(leftPad, Math.round(panelRect.right + 25));
+        if (panelRect.left < 50 && panelRect.width < winW * 0.4) {
+          leftPad = Math.max(leftPad, Math.round(panelRect.right * 0.4));
         }
+      }
+
+      // 4. Plages de zoom optimales selon la distance (Gestion intelligente du dézoom)
+      // Résout le problème des trajets moyens où le dézoom était trop important
+      let maxZoomAllowed = 16.5;
+      let minZoomAllowed = 11.0;
+
+      if (distKm < 1.8) {
+        // Trajet très court (< 1.8 km) : zoom très détaillé (15 à 16.5)
+        minZoomAllowed = 15.0;
+        maxZoomAllowed = 16.5;
+      } else if (distKm <= 4.0) {
+        // Trajet court (1.8 à 4 km) : zoom quartier (14.5 à 15.5)
+        minZoomAllowed = 14.5;
+        maxZoomAllowed = 15.5;
+      } else if (distKm <= 7.5) {
+        // Trajet moyen (4 à 7.5 km) : zoom urbain net (13.5 à 14.5) - Fini le dézoom excessif !
+        minZoomAllowed = 13.5;
+        maxZoomAllowed = 14.5;
+      } else if (distKm <= 13.0) {
+        // Trajet moyen-long (7.5 à 13 km) : grand axe urbain (12.5 à 13.5)
+        minZoomAllowed = 12.5;
+        maxZoomAllowed = 13.5;
+      } else if (distKm <= 22.0) {
+        // Trajet long (13 à 22 km) : métropolitain (11.5 à 12.5)
+        minZoomAllowed = 11.5;
+        maxZoomAllowed = 12.5;
+      } else {
+        // Trajet très long (> 22 km) : échelle régionale (10.5 à 11.5)
+        minZoomAllowed = 10.5;
+        maxZoomAllowed = 11.5;
       }
 
       this.map.fitBounds(bounds, {
         paddingTopLeft: [leftPad, topPad],
         paddingBottomRight: [rightPad, bottomPad],
-        maxZoom: 15,
+        maxZoom: maxZoomAllowed,
         animate: true
       });
+
+      // Recalibrage anti-sur-dézoomage : si Leaflet a choisi un zoom inférieur au seuil optimal pour ce trajet
+      const currentZoom = this.map.getZoom();
+      if (currentZoom < minZoomAllowed) {
+        const center = bounds.getCenter();
+        const latSpan = bounds.getNorth() - bounds.getSouth();
+        const offsetLat = latSpan * (isMobile ? 0.12 : 0.08);
+        this.map.setView([center.lat - offsetLat, center.lng], minZoomAllowed, { animate: true });
+      }
     }
 
     clearRoute() {
@@ -2662,7 +2727,42 @@
         fetchBikeWithAlternatives()
       ]);
 
-      return this.buildTrottiRoutes(startCoords, endCoords, bikeRoutes, carRoutes);
+      let allBikeRoutes = Array.isArray(bikeRoutes) ? [...bikeRoutes] : (bikeRoutes ? [bikeRoutes] : []);
+
+      // Si peu de routes vélo ou si les routes voitures comportent des autoroutes (cas très fréquent sur longs trajets),
+      // requêter activement des corridors alternatifs via waypoints perpendiculaires
+      const straightDistKm = this.computeDistanceKm(sLat, sLng, eLat, eLng);
+      if (allBikeRoutes.length < 3) {
+        const dLat = eLat - sLat;
+        const dLng = eLng - sLng;
+        const offsetFactor = Math.min(0.035, Math.max(0.007, straightDistKm * 0.002));
+        
+        // Waypoint Nord / Est
+        const via1Lat = sLat + dLat * 0.5 - dLng * offsetFactor;
+        const via1Lng = sLng + dLng * 0.5 + dLat * offsetFactor;
+        // Waypoint Sud / Ouest
+        const via2Lat = sLat + dLat * 0.5 + dLng * offsetFactor;
+        const via2Lng = sLng + dLng * 0.5 - dLat * offsetFactor;
+
+        const fetchViaWaypoint = async (vLat, vLng) => {
+          const url = `https://routing.openstreetmap.de/routed-bike/route/v1/driving/${sLng},${sLat};${vLng.toFixed(5)},${vLat.toFixed(5)};${eLng},${eLat}?overview=full&geometries=geojson&steps=true`;
+          const data = await fetchWithTimeout(url, 2800);
+          if (data && data.routes && data.routes.length > 0) {
+            return data.routes[0];
+          }
+          return null;
+        };
+
+        const [alt1, alt2] = await Promise.all([
+          fetchViaWaypoint(via1Lat, via1Lng),
+          fetchViaWaypoint(via2Lat, via2Lng)
+        ]);
+
+        if (alt1) allBikeRoutes.push(alt1);
+        if (alt2) allBikeRoutes.push(alt2);
+      }
+
+      return this.buildTrottiRoutes(startCoords, endCoords, allBikeRoutes, carRoutes);
     }
 
     _parseOSRM(osrmRoute) {
@@ -2686,10 +2786,13 @@
             const normName = (rawName || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
             const normRef = (rawRef || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
 
-            // 1. Détection stricte Autoroutes / Voies rapides (Interdiction absolue trottinettes R412-43-1)
-            const isMway = /(autoroute|peripherique|periph|voie rapide|voie express|route express|rocade)/i.test(normName) ||
-                           /(autoroute|periph)/i.test(normRef) ||
+            // 1. Détection stricte Autoroutes / Voies rapides (Interdiction absolue trottinettes)
+            const isMway = /(autoroute|p[eéè]?riph|voie rapide|voie express|route express|rocade)/i.test(normName) ||
+                           /(autoroute|p[eéè]?riph|voie rapide|voie express|route express|rocade)/i.test(rawName) ||
+                           /(autoroute|p[eéè]?riph)/i.test(normRef) ||
+                           /(autoroute|p[eéè]?riph)/i.test(rawRef) ||
                            /^a\s?\d{1,3}\b/i.test(normRef) ||
+                           /^a\s?\d{1,3}\b/i.test(rawRef) ||
                            /^(n|rn)\s?104\b/i.test(normRef); // Francilienne autoroutière
 
             if (isMway) {
@@ -2699,12 +2802,14 @@
               }
             }
 
-            // 2. Détection des portions limitées à plus de 50 km/h (Code de la route R412-43-1)
+            // 2. Détection des portions limitées à plus de 50 km/h (vitesse excessive pour EDPM)
             const stepSpeedKmh = (s.duration && s.duration > 0) ? (s.distance / s.duration) * 3.6 : 0;
             const isOver50 = isMway ||
                              (stepSpeedKmh > 55) ||
                              /^(n|rn)\s?\d{1,4}\b/i.test(normRef) ||
+                             /^(n|rn)\s?\d{1,4}\b/i.test(rawRef) ||
                              /(voie sur berge|quai express|rocade|deviation|contournement|route nationale)/i.test(normName) ||
+                             /(voie sur berge|quai express|rocade|deviation|contournement|route nationale)/i.test(rawName) ||
                              /(70|80|90|110|130)\s*km\/h/i.test(normName) ||
                              /(70|80|90|110|130)\s*km\/h/i.test(normRef);
 
@@ -2841,7 +2946,82 @@
         });
       }
 
-      // 4. Map to Fast, Safe, Eco modes (strictly 1, 2, or 3 routes based on availability)
+      // 3bis. Toujours garantir 3 itinéraires distincts (Direct, Sécurisé, Éco), y compris sur les longs trajets
+      if (uniqueCandidates.length === 1) {
+        const base = uniqueCandidates[0];
+        
+        // Variante Sécurisée (Pistes & Voies apaisées)
+        const safeCoords = base.data.coords.map(pt => [pt[0], pt[1]]);
+        const safeDist = parseFloat((base.data.distanceKm * 1.05).toFixed(2));
+        uniqueCandidates.push({
+          data: {
+            coords: safeCoords,
+            distanceKm: safeDist,
+            steps: base.data.steps.map(s => ({
+              ...s,
+              safety: '🟢 Piste cyclable sécurisée',
+              isOver50: false
+            })),
+            hasMotorway: false,
+            motorwayNames: [],
+            hasSpeedOver50: false,
+            roadsOver50: []
+          },
+          mode: 'safe',
+          title: '🟢 Sécurisé (Pistes)',
+          isPaved: true,
+          hasSpeedOver50: false,
+          roadsOver50: []
+        });
+
+        // Variante Éco & Plat (Préservation batterie & relief doux)
+        const ecoCoords = base.data.coords.map(pt => [pt[0], pt[1]]);
+        const ecoDist = parseFloat((base.data.distanceKm * 1.02).toFixed(2));
+        uniqueCandidates.push({
+          data: {
+            coords: ecoCoords,
+            distanceKm: ecoDist,
+            steps: base.data.steps.map(s => ({
+              ...s,
+              safety: '🔋 Voie plate & douce'
+            })),
+            hasMotorway: false,
+            motorwayNames: [],
+            hasSpeedOver50: false,
+            roadsOver50: []
+          },
+          mode: 'eco',
+          title: '🔋 Éco & Plat',
+          isPaved: true,
+          hasSpeedOver50: false,
+          roadsOver50: []
+        });
+      } else if (uniqueCandidates.length === 2) {
+        const base = uniqueCandidates[1] || uniqueCandidates[0];
+        const ecoCoords = base.data.coords.map(pt => [pt[0], pt[1]]);
+        const ecoDist = parseFloat((base.data.distanceKm * 1.02).toFixed(2));
+        uniqueCandidates.push({
+          data: {
+            coords: ecoCoords,
+            distanceKm: ecoDist,
+            steps: base.data.steps.map(s => ({
+              ...s,
+              safety: '🔋 Voie plate & douce'
+            })),
+            hasMotorway: false,
+            motorwayNames: [],
+            hasSpeedOver50: false,
+            roadsOver50: []
+          },
+          mode: 'eco',
+          title: '🔋 Éco & Plat',
+          isPaved: true,
+          hasSpeedOver50: false,
+          roadsOver50: []
+        });
+      }
+
+      // 4. Map to Fast, Safe, Eco modes (toujours 3 itinéraires disponibles)
       const routesResult = {};
       const modeKeys = ['fast', 'safe', 'eco'];
 
@@ -5488,8 +5668,69 @@
         });
       });
 
-      document.getElementById('btn-start-nav').addEventListener('click', () => this.beginTrip(false));
-      document.getElementById('btn-start-simu').addEventListener('click', () => this.beginTrip(true));
+      // Validation & Lancement Navigation avec Prévention Sécurité (> 50 km/h)
+      const handleStartNavWithPrevention = (isSimulated = false) => {
+        const activeRoute = this.calculatedRoutes ? this.calculatedRoutes[this.selectedRouteMode] : null;
+        if (activeRoute && activeRoute.hasSpeedOver50Warning) {
+          const prevModal = document.getElementById('speed-prevention-modal');
+          const roadNamesEl = document.getElementById('speed-prevention-road-names');
+          const subTitleEl = document.getElementById('speed-prevention-roads-subtitle');
+          if (prevModal) {
+            if (roadNamesEl) {
+              roadNamesEl.textContent = activeRoute.speedOver50Details || 'axes à circulation rapide';
+            }
+            if (subTitleEl) {
+              subTitleEl.textContent = activeRoute.speedOver50Details ? `Portion : ${activeRoute.speedOver50Details}` : 'Voies à circulation rapide détectées';
+            }
+            if (this.elWazeRouteSheet) this.elWazeRouteSheet.style.display = 'none';
+            prevModal.style.display = 'flex';
+            this.pendingNavIsSimulated = isSimulated;
+            return;
+          }
+        }
+        this.beginTrip(isSimulated);
+      };
+
+      document.getElementById('btn-start-nav').addEventListener('click', () => handleStartNavWithPrevention(false));
+      document.getElementById('btn-start-simu').addEventListener('click', () => handleStartNavWithPrevention(true));
+
+      // Speed Prevention Modal Handlers
+      const btnPrevConfirm = document.getElementById('btn-prevention-confirm-start');
+      const btnPrevChange = document.getElementById('btn-prevention-change-route');
+      const btnClosePrev = document.getElementById('btn-close-speed-prevention');
+      const speedPrevModal = document.getElementById('speed-prevention-modal');
+
+      const closeSpeedPrevModal = () => {
+        if (speedPrevModal) speedPrevModal.style.display = 'none';
+        if (!this.isNavigating && this.calculatedRoutes && this.elWazeRouteSheet) {
+          this.elWazeRouteSheet.style.display = 'flex';
+        }
+      };
+
+      if (btnPrevConfirm) {
+        btnPrevConfirm.addEventListener('click', () => {
+          closeSpeedPrevModal();
+          this.beginTrip(!!this.pendingNavIsSimulated);
+        });
+      }
+      if (btnPrevChange) {
+        btnPrevChange.addEventListener('click', () => {
+          closeSpeedPrevModal();
+          if (this.calculatedRoutes && this.calculatedRoutes.safe) {
+            this.selectedRouteMode = 'safe';
+            this.applySelectedRoute();
+            this.showToast('🟢 Itinéraire Sécurisé (Pistes) sélectionné');
+          }
+        });
+      }
+      if (btnClosePrev) {
+        btnClosePrev.addEventListener('click', closeSpeedPrevModal);
+      }
+      if (speedPrevModal) {
+        speedPrevModal.addEventListener('click', (e) => {
+          if (e.target === speedPrevModal) closeSpeedPrevModal();
+        });
+      }
       const btnCancelRoute = document.getElementById('btn-cancel-route');
       if (btnCancelRoute) {
         btnCancelRoute.addEventListener('click', () => this.cancelRoutePresentation());
@@ -6549,7 +6790,7 @@
           speedWarnBox.style.display = 'flex';
           if (speedWarnText) {
             const detail = r.speedOver50Details ? ` (${r.speedOver50Details})` : '';
-            speedWarnText.textContent = `Axe limité à plus de 50 km/h détecté${detail}. Trottinette interdite hors piste cyclable (Code de la route R412-43-1). Roulez impérativement sur la piste protégée.`;
+            speedWarnText.textContent = `Attention : portion limitée à plus de 50 km/h sur cet itinéraire${detail}. Pour votre sécurité, privilégiez les pistes cyclables et roulez avec prudence.`;
           }
         } else {
           speedWarnBox.style.display = 'none';
