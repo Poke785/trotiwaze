@@ -1,0 +1,1495 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>TrottiWaze - Navigation GPS Trottinette & Bornes 230V</title>
+  <meta name="description" content="Navigation GPS communautaire pour trottinettes électriques priorisant les pistes cyclables, alertes météo/pluie, points de recharge 230V et enregistrement de trajet.">
+  <meta name="theme-color" content="#0d1117">
+  <link rel="manifest" href="manifest.json">
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%2310b981'><path d='M13.5 5.5c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zM9.8 8.9L7 23h2.1l1.8-8 2.1 2v6h2v-7.5l-2.1-2 .6-3C14.8 12 16.8 13 19 13v-2c-1.9 0-3.5-1-4.3-2.4l-1-1.6c-.4-.6-1-1-1.7-1-.3 0-.5.1-.8.1L6 8.3V13h2V9.6l1.8-.7z'/></svg>">
+  
+  <!-- Leaflet CSS & JS (Clean Robust CDN without SRI mismatch) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  
+  <!-- Google Fonts: Inter & JetBrains Mono -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;700;800&display=swap" rel="stylesheet">
+  
+  <link rel="stylesheet" href="styles.css?v=4">
+</head>
+<body class="theme-dark">
+  <div id="app-container">
+    <!-- Map Canvas (Full 2D Smooth Leaflet) -->
+    <div id="map"></div>
+
+    <!-- 230V Charging Points Floating Toggle Badge (Mis de côté temporairement) -->
+    <div id="cyclosm-badge" class="glass-panel" style="display: none !important; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 20px;">
+      <label class="legend-charge-toggle" title="Afficher ou masquer les prises de recharge 230V sur la carte" style="display: flex; align-items: center; gap: 5px; cursor: pointer; border: none; padding: 0;">
+        <input type="checkbox" id="toggle-charging-stations">
+        <span class="charge-dot" style="font-size: 13px;">⚡</span> <span style="font-weight: 700; color: #fbbf24; font-size: 11px;">Prises 230V</span>
+      </label>
+      <button type="button" id="btn-quick-find-charge-badge" style="background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); color: #fbbf24; border-radius: 12px; font-size: 10.5px; font-weight: 700; padding: 2px 7px; cursor: pointer;" title="Trouver la prise 230V la plus proche">
+        📍 Plus proche
+      </button>
+    </div>
+
+    <!-- Top Floating Search & Itinerary Panel -->
+    <div id="route-panel" class="floating-panel glass-panel">
+      <!-- Mobile Pull / Collapse Handle -->
+      <div class="panel-collapse-bar" id="panel-collapse-handle" title="Réduire / Agrandir le panneau">
+        <span class="collapse-pill"></span>
+      </div>
+
+      <div class="panel-header">
+        <div class="app-brand">
+          <div class="brand-icon">🛴</div>
+          <div class="brand-text">
+            <span class="brand-title">Trotti<span>Waze</span></span>
+            <span class="brand-subtitle">Pistes cyclables & Navigation Waze</span>
+          </div>
+        </div>
+        <div class="header-actions">
+          <div class="radar-badge" id="radar-status-badge" title="Trottinettistes actifs dans votre secteur">
+            <span class="radar-pulse"></span>
+            👥 <span id="radar-user-count">6</span>
+          </div>
+          
+          <!-- Prominent Settings Button -->
+          <button id="btn-open-settings" class="btn-header-settings" title="Paramètres & Préférences dépliants" aria-label="Paramètres">
+            ⚙️ <span class="settings-btn-text">Réglages</span>
+          </button>
+
+          <!-- Discreet Compact Account Avatar Button -->
+          <button id="btn-open-auth" class="btn-header-account-mini" title="Mon Compte / Connexion" aria-label="Compte">
+            <span id="header-avatar-badge">👤</span>
+            <span class="online-pulse-dot" id="auth-online-dot" style="display:none;"></span>
+          </button>
+
+          <button id="btn-toggle-theme" class="icon-btn" title="Changer le thème" aria-label="Changer le thème">🌙</button>
+          <button id="btn-toggle-panel-fold" class="icon-btn panel-fold-btn" title="Replier le panneau">▲</button>
+        </div>
+      </div>
+
+      <!-- Live Road Adhesion & Rain Risk Barometer -->
+      <div id="road-adhesion-bar" class="road-adhesion-pill dry">
+        <span class="adhesion-icon" id="weather-icon">☀️</span>
+        <span class="adhesion-text" id="weather-summary">Sol sec • Adhérence optimale <strong>(100%)</strong></span>
+      </div>
+
+      <!-- Permanent GPS Permission Banner (Affiché si non validé définitivement dans le navigateur) -->
+      <div id="gps-permission-banner" class="gps-perm-banner" style="display: none;">
+        <div class="gps-perm-top">
+          <div class="gps-perm-icon-wrap">
+            <span class="gps-perm-icon">📍</span>
+            <span class="gps-perm-pulse"></span>
+          </div>
+          <div class="gps-perm-content">
+            <div class="gps-perm-title">Accès GPS Définitif</div>
+            <div class="gps-perm-desc">
+              Pour ne plus avoir à autoriser la position à chaque visite, activez l'accès permanent.
+            </div>
+          </div>
+          <button type="button" id="btn-dismiss-perm-banner" class="btn-perm-dismiss" title="Masquer pour cette session">✕</button>
+        </div>
+        <div class="gps-perm-actions">
+          <button type="button" id="btn-grant-permanent-gps" class="btn-perm-grant">
+            ⚡ Toujours autoriser
+          </button>
+          <button type="button" id="btn-guide-permanent-gps" class="btn-perm-guide">
+            ❓ Guide en 2 clics
+          </button>
+        </div>
+      </div>
+
+      <!-- Address Inputs Container -->
+      <div class="inputs-container">
+        <div class="input-row-wrapper" id="start-wrapper">
+          <div class="input-row">
+            <span class="input-marker start-marker">●</span>
+            <input type="text" id="start-input" placeholder="Point de départ (ou ma position)..." autocomplete="off">
+            <button id="btn-use-gps" class="icon-btn-inline" title="Utiliser mon GPS">📍</button>
+          </div>
+          <div id="start-suggestions" class="suggestions-dropdown" style="display: none;"></div>
+        </div>
+        <div class="input-divider">
+          <span class="divider-line"></span>
+          <button id="btn-swap-locations" class="swap-btn" title="Inverser les adresses">⇅</button>
+        </div>
+        <div class="input-row-wrapper" id="end-wrapper">
+          <div class="input-row">
+            <span class="input-marker end-marker">◆</span>
+            <input type="text" id="end-input" placeholder="Où aller ? (rue, ville, favori...)" autocomplete="off">
+            <button id="btn-show-history" class="icon-btn-inline" title="Historique des navigations">🕒</button>
+            <button id="btn-clear-dest" class="icon-btn-inline" title="Effacer">✕</button>
+          </div>
+          <div id="end-suggestions" class="suggestions-dropdown" style="display: none;"></div>
+        </div>
+      </div>
+
+      <!-- Quick Favorites & Actions Chips -->
+      <div class="quick-chips">
+        <button class="chip fav-chip" data-dest="Domicile" data-fav="home">🏠 Domicile</button>
+        <button class="chip fav-chip" data-dest="Travail" data-fav="work">💼 Travail</button>
+        <button class="chip fav-chip-history" id="btn-quick-history" title="Historique de vos trajets">🕒 Historique</button>
+        <button class="chip fav-chip-recenter" id="btn-quick-gps-fix" title="Revenir à ma position GPS actuelle">📍 Ma position</button>
+        <button class="chip fav-chip-charge" id="btn-quick-find-charge" title="Rechercher une prise 230V" style="display: none !important;">⚡ Prise 230V</button>
+        <button class="chip fav-chip-add" id="btn-quick-record-trigger">🔴 Enregistrer</button>
+      </div>
+
+      <!-- Recent Navigations Section directly visible in route panel -->
+      <div id="recent-nav-section" class="recent-nav-section">
+        <div class="recent-nav-header">
+          <div class="recent-nav-header-left">
+            <span class="recent-nav-icon">🕒</span>
+            <span class="recent-nav-title">Dernières Navigations</span>
+            <span class="recent-nav-badge" id="recent-nav-count-badge">0</span>
+          </div>
+          <button id="btn-see-all-rides" class="recent-nav-all-btn" title="Voir l'historique complet dans Mes Trajets">Tout voir ➔</button>
+        </div>
+        <div id="recent-nav-list" class="recent-nav-list">
+          <!-- Injecté dynamiquement -->
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Waze-Style Route Selection & Launch Bottom Sheet (Zero Scroll, 100% visible) -->
+    <div id="waze-route-sheet" class="glass-panel waze-bottom-sheet" style="display: none;">
+      <!-- Mobile Drag Handle & Toggle Button -->
+      <div class="waze-sheet-bar" id="waze-sheet-toggle" title="Réduire / Agrandir le sélecteur">
+        <span class="waze-sheet-pill"></span>
+        <span class="waze-sheet-title">Itinéraires TrottiWaze</span>
+        <button id="btn-toggle-route-sheet" class="waze-sheet-btn" title="Réduire / Agrandir">▼</button>
+      </div>
+
+      <div id="waze-sheet-body" class="waze-sheet-body">
+        <!-- Hidden elements for data-binding backward compatibility -->
+        <div id="route-modes" style="display: none !important;">
+          <div class="route-card-waze route-tab-pill active" data-mode="fast">
+            <span id="rcw-time-fast"></span><span id="rcw-climb-fast"></span><span id="rcw-warn-fast"></span><span id="rcw-dist-fast"></span><span id="rcw-piste-fast"></span>
+          </div>
+          <div class="route-card-waze route-tab-pill" data-mode="safe">
+            <span id="rcw-time-safe"></span><span id="rcw-climb-safe"></span><span id="rcw-warn-safe"></span><span id="rcw-dist-safe"></span><span id="rcw-piste-safe"></span>
+          </div>
+          <div class="route-card-waze route-tab-pill" data-mode="eco">
+            <span id="rcw-time-eco"></span><span id="rcw-climb-eco"></span><span id="rcw-warn-eco"></span><span id="rcw-dist-eco"></span><span id="rcw-piste-eco"></span>
+          </div>
+        </div>
+        <span id="elev-end-dist" style="display:none;"></span>
+
+        <!-- Compact Speed Limit Warning (> 50 km/h) Badge (Discret mais clair) -->
+        <div class="waze-speed-warning-compact" id="waze-speed-warning-box" style="display: none;">
+          <span class="speed-warning-icon-sm">⚠️</span>
+          <span class="speed-warning-text-sm" id="speed-warning-roads-text">Voie &gt; 50 km/h détectée • Restez sur les pistes cyclables</span>
+        </div>
+
+        <!-- Action Launch Buttons (Annuler & Démarrer) -->
+        <div class="waze-sheet-actions">
+          <button id="btn-cancel-route" class="btn-launch-cancel" title="Annuler et fermer la présentation d'itinéraire">
+            ❌ Annuler
+          </button>
+          <button id="btn-start-nav" class="btn-launch-primary">
+            <span class="launch-icon">🚀</span>
+            <div class="launch-text-box">
+              <span class="launch-main-text" id="launch-button-label">DÉMARRER</span>
+              <span class="launch-sub-text" id="launch-button-sub">-- min • -- km</span>
+            </div>
+          </button>
+          <button id="btn-start-simu" class="btn-launch-secondary" title="Simuler l'itinéraire">
+            🎮 Démo
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Live Ride Recording Banner (Geovelo Style) -->
+    <div id="live-recording-hud" class="glass-panel" style="display: none;">
+      <div class="rec-status-indicator">
+        <span class="rec-dot-pulse"></span>
+        <span class="rec-badge-text">ENREGISTREMENT EN COURS</span>
+      </div>
+      <div class="rec-stats-row">
+        <div class="rec-stat-cell">
+          <span class="rec-label">Chrono</span>
+          <span class="rec-val mono" id="rec-live-time">00:00:00</span>
+        </div>
+        <div class="rec-stat-cell">
+          <span class="rec-label">Distance</span>
+          <span class="rec-val highlight mono" id="rec-live-distance">0.00 km</span>
+        </div>
+        <div class="rec-stat-cell">
+          <span class="rec-label">Vitesse Moy.</span>
+          <span class="rec-val mono" id="rec-live-avg-speed">0.0 km/h</span>
+        </div>
+        <div class="rec-stat-cell">
+          <span class="rec-label">Vitesse Max</span>
+          <span class="rec-val mono" id="rec-live-max-speed">0.0 km/h</span>
+        </div>
+      </div>
+      <div class="rec-controls-row">
+        <button id="btn-rec-pause" class="btn-rec-action pause">⏸ Pause</button>
+        <button id="btn-rec-stop" class="btn-rec-action stop">⏹ Terminer & Sauvegarder</button>
+      </div>
+    </div>
+
+    <!-- Active Navigation Top Banner -->
+    <div id="nav-banner" class="glass-panel" style="display: none;">
+      <div class="nav-direction-icon" id="nav-turn-icon">
+        <svg width="36" height="36" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="19" x2="12" y2="5"></line>
+          <polyline points="5 12 12 5 19 12"></polyline>
+        </svg>
+      </div>
+      <div class="nav-instruction-content">
+        <div class="nav-distance" id="nav-step-distance">Prenez la route</div>
+        <div class="nav-street" id="nav-step-street">Suivre l'itinéraire</div>
+        <div class="nav-speed-limit-warning" id="nav-step-speed-warning" style="display: none;">⚠️ Axe &gt; 50 km/h — Piste obligatoire</div>
+      </div>
+      <div class="nav-top-controls">
+        <button id="btn-nav-map-style" class="icon-btn-square" title="Changer le style de carte (Rues GPS, Satellite, CyclOSM, Nuit...)">🗺️</button>
+        <button id="btn-toggle-voice" class="icon-btn-square" title="Activer / Désactiver la voix">🔊</button>
+        <button id="btn-stop-nav" class="icon-btn-square danger" title="Arrêter la navigation">✕</button>
+      </div>
+    </div>
+
+    <!-- Tab & Full-Height Drawer for Switching Route during Navigation -->
+    <button id="nav-route-drawer-tab" class="nav-route-drawer-tab" style="display: none;" title="Changer d'itinéraire en direct">
+      <span class="tab-pulse-glow"></span>
+      <span class="tab-icon">🔀</span>
+      <span class="tab-vertical-text">ITINÉRAIRES</span>
+    </button>
+
+    <div id="nav-route-drawer" class="nav-route-drawer" style="display: none;">
+      <div class="nav-drawer-header">
+        <div class="nav-drawer-title-group">
+          <div class="nav-drawer-icon-wrap">
+            <span class="nav-drawer-icon">🛣️</span>
+          </div>
+          <div>
+            <div class="nav-drawer-title">Changer d'itinéraire</div>
+            <div class="nav-drawer-subtitle">Basculer en temps réel en navigation</div>
+          </div>
+        </div>
+        <button id="btn-close-nav-drawer" class="nav-drawer-close-btn" title="Fermer le volet">✕</button>
+      </div>
+
+      <div class="nav-drawer-active-bar" id="nav-drawer-active-bar">
+        <span class="active-dot"></span>
+        <span class="active-label">Actuel : </span>
+        <strong id="nav-drawer-active-title">⚡ Direct &amp; Rapide</strong>
+      </div>
+
+      <div class="nav-drawer-content" id="nav-drawer-routes-list">
+        <!-- Dynamically populated route cards -->
+      </div>
+
+      <div class="nav-drawer-footer">
+        <button id="btn-drawer-recalc-gps" class="btn-drawer-recalc" title="Recalculer depuis ma position GPS">
+          <span>🔄</span> Recalculer depuis ma position
+        </button>
+      </div>
+    </div>
+
+    <!-- Real-Time Hazard Warning Alert Banner -->
+    <div id="hazard-proximity-alert" class="hazard-alert-banner glass-panel" style="display: none;">
+      <div class="hazard-alert-icon" id="hazard-alert-icon">⚠️</div>
+      <div class="hazard-alert-body">
+        <div class="hazard-alert-title" id="hazard-alert-title">Nid-de-poule dangereux à 120 m</div>
+        <div class="hazard-alert-sub" id="hazard-alert-sub">Risque pour roues 8-10 pouces</div>
+      </div>
+      <div class="hazard-alert-actions">
+        <button id="btn-confirm-hazard" class="btn-micro green">Toujours là 👍</button>
+        <button id="btn-dismiss-hazard" class="btn-micro gray">Passé ✕</button>
+      </div>
+    </div>
+
+    <!-- HUD Dashboard (Bottom) -->
+    <div id="hud-dashboard" class="glass-panel">
+      <!-- Speedometer Gauge -->
+      <div class="hud-speedometer-box">
+        <div class="speed-ring-container">
+          <svg class="speed-svg" viewBox="0 0 100 100">
+            <circle class="speed-bg-circle" cx="50" cy="50" r="42" />
+            <circle class="speed-progress-circle" id="speed-circle-bar" cx="50" cy="50" r="42" />
+          </svg>
+          <div class="speed-number-box">
+            <span id="hud-speed-val" class="speed-digits">0</span>
+            <span class="speed-unit">km/h</span>
+          </div>
+        </div>
+        <div class="speed-legal-limit" id="speed-limit-badge" title="Vitesse de croisière configurée">
+          25
+        </div>
+      </div>
+
+      <!-- Live Trip Stats -->
+      <div class="hud-trip-details">
+        <div class="trip-stat">
+          <span class="stat-label">Arrivée</span>
+          <span class="stat-value highlight" id="hud-eta">--:--</span>
+        </div>
+        <div class="trip-stat">
+          <span class="stat-label">Temps</span>
+          <span class="stat-value" id="hud-time-rem">-- min</span>
+        </div>
+        <div class="trip-stat">
+          <span class="stat-label">Distance</span>
+          <span class="stat-value" id="hud-dist-rem">-- km</span>
+        </div>
+      </div>
+
+      <!-- Battery Estimation Widget (% Consommé & Wh) -->
+      <div class="hud-battery-box" id="hud-battery-container" title="Estimation de consommation batterie">
+        <div class="battery-icon-wrapper">
+          <div class="battery-shell">
+            <div class="battery-level" id="hud-battery-fill" style="width: 15%;"></div>
+          </div>
+          <span class="battery-tip"></span>
+        </div>
+        <div class="battery-text">
+          <div class="battery-percent" id="hud-battery-percent">-0%</div>
+          <div class="battery-sub" id="hud-battery-arrival">⚡ Conso : 0 Wh</div>
+          <span class="batt-thermal-badge" id="batt-thermal-impact-tag" style="display: none;">❄️ Froid</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Parked Scooter Floating Banner -->
+    <div id="parked-scooter-floating-banner" class="glass-panel parked-scooter-banner" style="display: none;">
+      <div class="parked-banner-left">
+        <span class="parked-badge-icon">🅿️</span>
+        <div class="parked-banner-info">
+          <span id="parked-banner-text"><strong>Trottinette garée</strong></span>
+        </div>
+      </div>
+      <div class="parked-banner-actions">
+        <button id="btn-parked-walk" class="btn-micro green" title="Itinéraire pour retrouver ma trottinette">🚶 Retrouver</button>
+        <button id="btn-parked-clear" class="btn-micro danger" title="Libérer le stationnement">🔓</button>
+      </div>
+    </div>
+
+    <!-- Organized Floating Action Stack (Right Column) -->
+    <div class="map-floating-stack">
+      <!-- Compass / Map Rotation Heading Button (North-Up / Course-Up) -->
+      <button id="btn-compass-mode" class="fab-btn compass-btn" title="Boussole & Rotation de la Carte (Nord / Cap)">
+        <span id="compass-icon">🧭</span>
+      </button>
+
+      <!-- Quick Map Style Switcher (Toujours accessible, y compris en cours de trajet) -->
+      <button id="btn-floating-map-switch" class="fab-btn map-switch-fab" title="Changer de carte à tout moment (Rues GPS, Satellite, CyclOSM, Nuit...)">
+        🗺️
+      </button>
+
+      <!-- Recenter Button with Auto-Follow GPS -->
+      <button id="btn-recenter" class="fab-btn active-tracking" title="Centrer et suivre ma position GPS">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="8"/><line x1="12" y1="12" r="8"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/></svg>
+      </button>
+      
+      <!-- Quick Record Button (Géovelo REC) -->
+      <button id="btn-quick-record-fab" class="fab-btn record-fab" title="Enregistrer mon trajet (style Géovelo)">
+        🔴
+      </button>
+
+      <!-- Park Scooter Button (Où est garée ma trottinette ?) -->
+      <button id="btn-park-scooter" class="fab-btn park-fab" title="Mémoriser mon stationnement (Où est garée ma trottinette ?)">
+        🅿️
+      </button>
+
+      <!-- Cockpit HUD Fullscreen Handlebar Mode Button -->
+      <button id="btn-open-cockpit-hud" class="fab-btn hud-cockpit-btn" title="Mode Cockpit Guidon Plein Écran (Tachymètre, Watts, Inclinomètre)">
+        🎛️
+      </button>
+
+      <!-- Waze Report Hazard Button -->
+      <button id="btn-report-hazard" class="fab-btn report-hazard-btn" title="Signaler un danger ou une prise 230V sur la piste">
+        ⚠️
+      </button>
+    </div>
+
+    <!-- Fullscreen Cockpit HUD Handlebar Overlay -->
+    <div id="cockpit-hud-overlay" class="cockpit-hud-fullscreen" style="display: none;">
+      <div class="cockpit-hud-header">
+        <div class="cockpit-brand-badge">
+          <span class="cockpit-avatar-icon" id="cockpit-vehicle-icon">🛴</span>
+          <div class="cockpit-brand-info">
+            <span class="cockpit-brand-title" id="cockpit-vehicle-name">COCKPIT GUIDON</span>
+            <span class="cockpit-brand-sub" id="cockpit-speed-limit-label">BRIDE : 25 KM/H</span>
+          </div>
+        </div>
+        <div class="cockpit-top-actions">
+          <button id="btn-cockpit-mirror" class="cockpit-chip-btn" title="Mode Miroir Tête-Haute (HUD Visière)">🪞 Miroir</button>
+          <button id="btn-close-cockpit-hud" class="cockpit-close-btn" title="Quitter le Cockpit">✕</button>
+        </div>
+      </div>
+
+      <!-- Giant Speed Gauge with Instant Power Watts -->
+      <div class="cockpit-main-gauge">
+        <div class="cockpit-speed-display">
+          <span class="cockpit-speed-number" id="cockpit-speed-val">0</span>
+          <span class="cockpit-speed-unit">KM/H</span>
+        </div>
+        
+        <div class="cockpit-power-box">
+          <div class="cockpit-power-header">
+            <span>⚡ PUISSANCE MOTEUR</span>
+            <span id="cockpit-power-watts" class="mono">0 W</span>
+          </div>
+          <div class="cockpit-power-meter-track">
+            <div class="cockpit-power-meter-fill" id="cockpit-power-meter-fill" style="width: 0%;"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Telemetry & Ride Dashboard Grid -->
+      <div class="cockpit-telemetry-grid">
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">📐 Inclinomètre / Pente</span>
+          <span class="cockpit-cell-value highlight mono" id="cockpit-slope-val">0.0%</span>
+          <span class="cockpit-cell-sub" id="cockpit-slope-sub">Plat</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">🔋 Conso Batterie</span>
+          <span class="cockpit-cell-value mono" id="cockpit-batt-val">-0%</span>
+          <span class="cockpit-cell-sub" id="cockpit-wh-val">0 Wh</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">⏱️ Chrono Trajet</span>
+          <span class="cockpit-cell-value mono" id="cockpit-chrono-val">00:00:00</span>
+          <span class="cockpit-cell-sub" id="cockpit-dist-val">0.00 km</span>
+        </div>
+        <div class="cockpit-telemetry-cell">
+          <span class="cockpit-cell-label">🏁 Vitesse Moyenne</span>
+          <span class="cockpit-cell-value mono" id="cockpit-avg-speed-val">0.0 km/h</span>
+          <span class="cockpit-cell-sub" id="cockpit-max-speed-sub">Max: 0.0 km/h</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Simulation Speed Controller (visible in demo mode) -->
+    <div id="simu-controller" class="glass-panel" style="display: none;">
+      <span class="simu-label">🎮 Démo :</span>
+      <button id="btn-simu-pause" class="btn-micro">⏸ Pause</button>
+      <button id="btn-simu-1x" class="btn-micro active">1x</button>
+      <button id="btn-simu-2x" class="btn-micro">2x</button>
+      <button id="btn-simu-4x" class="btn-micro">4x</button>
+      <button id="btn-simu-stop" class="btn-micro danger">Quitter</button>
+    </div>
+
+    <!-- Park Scooter Confirmation Modal -->
+    <div id="park-scooter-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 380px;">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">🅿️ Mémoriser mon Stationnement</div>
+            <div class="modal-subtitle">Retrouvez facilement votre trottinette à votre retour</div>
+          </div>
+          <button id="btn-close-park-modal" class="icon-btn">✕</button>
+        </div>
+        <div class="modal-body-p" style="padding: 14px 18px;">
+          <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 12px; line-height: 1.4;">
+            📍 Votre position GPS actuelle sera enregistrée comme lieu de stationnement avec un repère 🅿️ sur la carte.
+          </p>
+          <div class="form-group">
+            <label class="form-label" for="park-memo-note">📝 Note / Point de repère (Optionnel) :</label>
+            <input type="text" id="park-memo-note" class="form-input" placeholder="Ex: Arceau vélo devant le cinéma, 2e étage...">
+          </div>
+          <div style="display: flex; gap: 8px; margin-top: 14px;">
+            <button id="btn-confirm-park" class="btn-primary" style="flex: 1; padding: 10px 16px;">📍 Mémoriser ce stationnement</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         UNIFIED SETTINGS MODAL / DRAWER (Volets Dépliants Accordéon pour Mobile)
+         ===================================================================== -->
+    <div id="settings-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel settings-modal-card">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">⚙️ Paramètres & Préférences</div>
+            <div class="modal-subtitle">Personnalisez votre GPS pour votre trottinette</div>
+          </div>
+          <button id="btn-close-settings" class="icon-btn" aria-label="Fermer">✕</button>
+        </div>
+
+        <!-- Collapsible Accordion Container for Mobile/Tablet -->
+        <div class="settings-accordion" id="settings-accordion-container">
+
+          <!-- ===============================================================
+               VOLET 1 : MON GARAGE DE TROTTINETTES
+               =============================================================== -->
+          <div class="accordion-item open" id="acc-item-garage">
+            <button type="button" class="accordion-header" data-target="acc-body-garage">
+              <div class="acc-header-left">
+                <span class="acc-header-icon">🛴</span>
+                <div class="acc-header-titles">
+                  <span class="acc-title">Mon Garage de Trottinettes</span>
+                  <span class="acc-subtitle" id="acc-garage-summary">Aucune trottinette enregistrée (Garage vide)</span>
+                </div>
+              </div>
+              <div class="acc-header-right">
+                <span class="acc-badge" id="acc-garage-badge">0 active</span>
+                <span class="acc-chevron">▼</span>
+              </div>
+            </button>
+
+            <div class="accordion-body" id="acc-body-garage">
+              <div class="garage-header-row">
+                <p class="tab-subtitle">Enregistrez vos trottinettes et basculez en 1 clic :</p>
+                <button id="btn-show-add-scooter" class="btn-micro green">➕ Ajouter un modèle</button>
+              </div>
+
+              <!-- Active Scooter Quick Selector / Fleet Cards Grid -->
+              <div id="garage-scooters-list" class="garage-fleet-grid">
+                <!-- Dynamically populated via JS -->
+              </div>
+
+              <!-- Add / Edit Scooter Form Drawer -->
+              <div id="scooter-form-drawer" class="scooter-edit-drawer" style="display: none;">
+                <div class="drawer-header">
+                  <span id="scooter-drawer-title" class="drawer-title">➕ Nouvelle Trottinette</span>
+                  <button id="btn-close-scooter-drawer" class="btn-micro">✕ Annuler</button>
+                </div>
+
+                <input type="hidden" id="edit-scooter-id" value="">
+
+                <!-- Name / Brand -->
+                <div class="form-group">
+                  <label for="scooter-custom-name">🛴 Nom / Modèle (ex: Ninebot G30, Xiaomi Pro 2, Dualtron...)</label>
+                  <input type="text" id="scooter-custom-name" placeholder="Nom du modèle" class="styled-text-input">
+                </div>
+
+                <!-- Scooter Avatar / Icon Picker -->
+                <div class="form-group">
+                  <label>🎨 Type de Véhicule & Silhouette</label>
+                  <div class="scooter-icon-picker">
+                    <button type="button" class="scooter-icon-choice active" data-icon="🛴">🛴 Trotti</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="⚡">⚡ Sport</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🎡">🎡 Gyroroue</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛹">🛹 E-Skate</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🚲">🚲 VAE</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛞">🛞 Onewheel</button>
+                    <button type="button" class="scooter-icon-choice" data-icon="🛵">🛵 Draisine</button>
+                  </div>
+                </div>
+
+                <!-- Battery Wh with V x Ah Helper -->
+                <div class="form-group">
+                  <div class="form-label-row">
+                    <label for="scooter-capacity">🔋 Capacité batterie (Wh)</label>
+                    <button type="button" id="btn-toggle-wh-calc" class="btn-calc-wh-toggle" title="Ouvrir le calculateur Tension × Ampères-heures">⚡ Calculer (V × Ah)</button>
+                  </div>
+                  <div class="numeric-input-wrapper">
+                    <input type="number" inputmode="numeric" pattern="[0-9]*" id="scooter-capacity" min="100" max="5000" value="474" placeholder="ex: 474" class="styled-number-input">
+                    <span class="input-unit-tag">Wh</span>
+                  </div>
+
+                  <!-- V x Ah mini calculator -->
+                  <div id="wh-calc-drawer" class="calc-drawer" style="display: none;">
+                    <span class="calc-title">💡 Calculateur Tension (V) × Capacité (Ah) :</span>
+                    <div class="calc-row">
+                      <input type="number" id="calc-volts" placeholder="Volts (ex: 36, 48, 52)" class="styled-mini-input">
+                      <span class="calc-sym">×</span>
+                      <input type="number" id="calc-amphours" step="0.1" placeholder="Ah (ex: 13, 15, 20)" class="styled-mini-input">
+                      <span class="calc-sym">=</span>
+                      <button type="button" id="btn-apply-wh-calc" class="btn-micro green">Appliquer aux Wh</button>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Cruising Speed Slider & Presets -->
+                <div class="form-group">
+                  <div class="form-label-row">
+                    <label for="scooter-speed-slider">⚡ Vitesse de croisière souhaitée</label>
+                    <span id="val-speed-slider" class="range-val-badge">25 km/h</span>
+                  </div>
+                  <input type="range" id="scooter-speed-slider" min="15" max="60" value="25" step="1" class="styled-range">
+                  
+                  <div class="speed-presets-row">
+                    <button type="button" class="speed-preset-btn" data-speed="18">18 km/h</button>
+                    <button type="button" class="speed-preset-btn active" data-speed="25">25 km/h</button>
+                    <button type="button" class="speed-preset-btn" data-speed="32">32 km/h</button>
+                    <button type="button" class="speed-preset-btn" data-speed="45">45 km/h</button>
+                    <button type="button" class="speed-preset-btn" data-speed="55">55+ km/h</button>
+                  </div>
+                </div>
+
+                <!-- Rider Weight & Scooter Weight -->
+                <div class="form-row-2cols">
+                  <div class="form-group">
+                    <label for="scooter-rider-weight">⚖️ Poids rider (kg)</label>
+                    <div class="numeric-input-wrapper">
+                      <input type="number" inputmode="numeric" pattern="[0-9]*" id="scooter-rider-weight" min="30" max="220" value="75" placeholder="ex: 75" class="styled-number-input">
+                      <span class="input-unit-tag">kg</span>
+                    </div>
+                  </div>
+                  <div class="form-group">
+                    <label for="scooter-weight">⚖️ Poids trotti (kg)</label>
+                    <div class="numeric-input-wrapper">
+                      <input type="number" inputmode="numeric" pattern="[0-9]*" id="scooter-weight" min="8" max="90" value="18" placeholder="ex: 18" class="styled-number-input">
+                      <span class="input-unit-tag">kg</span>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Battery Level Percentage -->
+                <div class="form-group">
+                  <label for="scooter-battery-pct">🔋 Niveau de charge de départ (%)</label>
+                  <div class="range-with-val">
+                    <input type="range" id="scooter-battery-pct" min="5" max="100" value="100" class="styled-range">
+                    <span id="val-battery-pct" class="range-val">100%</span>
+                  </div>
+                </div>
+
+                <button id="btn-save-scooter-form" class="btn-primary full-width">💾 Enregistrer ce modèle</button>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===============================================================
+               VOLET 2 : PRÉFÉRENCES DE ROUTE & FILTRES STRICTS
+               =============================================================== -->
+          <div class="accordion-item" id="acc-item-filters">
+            <button type="button" class="accordion-header" data-target="acc-body-filters">
+              <div class="acc-header-left">
+                <span class="acc-header-icon">🛠️</span>
+                <div class="acc-header-titles">
+                  <span class="acc-title">Filtres de Route & Praticabilité</span>
+                  <span class="acc-subtitle" id="acc-filters-summary">100% Goudron • Chemins interdits</span>
+                </div>
+              </div>
+              <div class="acc-header-right">
+                <span class="acc-badge green" id="acc-filters-badge">Actifs</span>
+                <span class="acc-chevron">▼</span>
+              </div>
+            </button>
+
+            <div class="accordion-body" id="acc-body-filters">
+              <!-- Carte Gestion Permission GPS Définitive -->
+              <div class="gps-permission-setting-card" id="gps-perm-setting-card">
+                <div class="gps-perm-header">
+                  <div class="gps-perm-header-left">
+                    <span class="gps-perm-icon-sm">📍</span>
+                    <div>
+                      <div class="filter-card-title">Autorisation GPS Permanente</div>
+                      <div class="filter-card-desc" id="gps-perm-status-desc">Mémorise l'accès pour ne plus jamais le redemander</div>
+                    </div>
+                  </div>
+                  <span class="gps-perm-status-badge" id="gps-perm-status-badge">Vérification...</span>
+                </div>
+                <div class="gps-perm-footer" id="gps-perm-footer-actions">
+                  <button type="button" id="btn-settings-grant-gps" class="btn-secondary-sm">
+                    📍 Activer l'accès définitif
+                  </button>
+                  <button type="button" id="btn-settings-gps-guide" class="btn-link-sm">
+                    📖 Comment autoriser en 2 clics ?
+                  </button>
+                </div>
+              </div>
+
+              <p class="tab-subtitle">Sélectionnez les surfaces autorisées pour les roues 8-10 pouces :</p>
+              
+              <div class="filters-settings-list">
+                <!-- SÉCURITÉ LÉGALE : INTERDICTION AUTOROUTES (STRICTE) -->
+                <div class="filter-toggle-card static-safety-card" style="background: rgba(239, 68, 68, 0.08); border-color: rgba(239, 68, 68, 0.35);">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">⛔</span>
+                    <div>
+                      <div class="filter-card-title" style="color: #f87171;">Autoroutes &amp; Voies Rapides Strictement Interdites</div>
+                      <div class="filter-card-desc">Exclut 100% des autoroutes (A1-A999), voies rapides, rocades et périphériques pour votre sécurité</div>
+                    </div>
+                  </div>
+                  <span class="safety-badge-locked" style="font-size: 11px; font-weight: 800; color: #f87171; background: rgba(239, 68, 68, 0.2); padding: 4px 8px; border-radius: 8px;">VERROUILLÉ</span>
+                </div>
+
+                <!-- ALERTE AUTOMATIQUE ROUTES > 50 KM/H -->
+                <div class="filter-toggle-card static-safety-card" style="background: rgba(245, 158, 11, 0.08); border-color: rgba(245, 158, 11, 0.35);">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">⚠️</span>
+                    <div>
+                      <div class="filter-card-title" style="color: #fbbf24;">Alerte Routes &gt; 50 km/h Active</div>
+                      <div class="filter-card-desc">Détecte et signale automatiquement les portions limitées à plus de 50 km/h (pistes obligatoires)</div>
+                    </div>
+                  </div>
+                  <span class="safety-badge-locked" style="font-size: 11px; font-weight: 800; color: #fbbf24; background: rgba(245, 158, 11, 0.2); padding: 4px 8px; border-radius: 8px;">ACTIF</span>
+                </div>
+
+                <!-- NOUVEAU FILTRE STRICT : INTERDIRE LES CHEMINS -->
+                <label class="filter-toggle-card highlight-filter">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">🚫</span>
+                    <div>
+                      <div class="filter-card-title">Interdire les chemins non goudronnés</div>
+                      <div class="filter-card-desc">Exclut strictement la terre, boue, gravillons et sentiers non bitumés (100% Routes & Pistes lisses)</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="filter-avoid-dirt-paths" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+
+                <!-- Éviter les pavés -->
+                <label class="filter-toggle-card">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">🧱</span>
+                    <div>
+                      <div class="filter-card-title">Éviter les pavés disjoints</div>
+                      <div class="filter-card-desc">Contourne les zones pavées à fortes vibrations</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="filter-avoid-cobblestones" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+
+                <!-- Pente douce -->
+                <label class="filter-toggle-card">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">↗</span>
+                    <div>
+                      <div class="filter-card-title">Privilégier pente douce (&lt; 5%)</div>
+                      <div class="filter-card-desc">Évite les fortes côtes pour préserver l'autonomie batterie</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="filter-avoid-steep-hills" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+
+                <!-- Pistes protégées -->
+                <label class="filter-toggle-card">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">🛡️</span>
+                    <div>
+                      <div class="filter-card-title">100% Voies cyclables protégées</div>
+                      <div class="filter-card-desc">Priorité maximale aux voies séparées de la circulation auto</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="filter-prefer-protected">
+                  <span class="toggle-slider"></span>
+                </label>
+
+                <!-- Afficher bornes 230V (Mises de côté temporairement) -->
+                <label class="filter-toggle-card" style="display: none !important;">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon">⚡</span>
+                    <div>
+                      <div class="filter-card-title">Afficher les Prises 230V sur la carte</div>
+                      <div class="filter-card-desc">Bornes publiques, prises café vélo et recharge trottinette</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="filter-show-charges">
+                  <span class="toggle-slider"></span>
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===============================================================
+               VOLET 3 : FONDS DE CARTE & PISTES CYCLABLES VÉRIFIÉES
+               =============================================================== -->
+          <div class="accordion-item" id="acc-item-maps">
+            <button type="button" class="accordion-header" data-target="acc-body-maps">
+              <div class="acc-header-left">
+                <span class="acc-header-icon">🗺️</span>
+                <div class="acc-header-titles">
+                  <span class="acc-title">Fonds de Carte & Pistes Vérifiées</span>
+                  <span class="acc-subtitle" id="acc-maps-summary">Vue Satellite Réelle HD (Esri)</span>
+                </div>
+              </div>
+              <div class="acc-header-right">
+                <span class="acc-badge" id="acc-maps-badge">SATELLITE</span>
+                <span class="acc-chevron">▼</span>
+              </div>
+            </button>
+
+            <div class="accordion-body" id="acc-body-maps">
+              <!-- 230V Charging Stations Toggle (Mises de côté temporairement) -->
+              <label class="filter-toggle-card highlight-cycleways" style="display: none !important; margin-bottom: 12px;">
+                <div class="filter-card-left">
+                  <span class="filter-card-icon">⚡</span>
+                  <div>
+                    <div class="filter-card-title">Prises de Recharge 230V</div>
+                    <div class="filter-card-desc">Affiche les prises secteur 230V compatibles avec votre chargeur trottinette</div>
+                  </div>
+                </div>
+                <input type="checkbox" id="filter-show-charges-maps">
+                <span class="toggle-slider"></span>
+              </label>
+
+              <p class="tab-subtitle">Choisissez le style de carte :</p>
+              <div class="map-layers-grid">
+                <!-- Layer 1: Vue Satellite Réelle HD (Défaut au lancement) -->
+                <div class="map-layer-option active" data-layer-id="satellite">
+                  <div class="layer-preview sat-preview">🛰️</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Vue Satellite Réelle HD (Esri - Par Défaut)</div>
+                    <div class="layer-desc">Photographies aériennes haute résolution mondiale</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 2: Esri Streets GPS -->
+                <div class="map-layer-option" data-layer-id="streets">
+                  <div class="layer-preview esri-preview">🏙️</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Style GPS Urbain (Esri Streets)</div>
+                    <div class="layer-desc">Contraste élevé, lisibilité maximale des routes et des rues</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 3: OpenStreetMap Standard -->
+                <div class="map-layer-option" data-layer-id="osm">
+                  <div class="layer-preview osm-preview">🌍</div>
+                  <div class="layer-info">
+                    <div class="layer-name">OpenStreetMap Standard</div>
+                    <div class="layer-desc">Chargement rapide, ultra-fiable et universel</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 4: CyclOSM France (Cycle Infrastructure) -->
+                <div class="map-layer-option" data-layer-id="cyclosm">
+                  <div class="layer-preview cyclosm-preview">🚲</div>
+                  <div class="layer-info">
+                    <div class="layer-name">CyclOSM (Pistes Cyclables Détaillées)</div>
+                    <div class="layer-desc">Infrastructures vélo : pistes protégées, bandes, double-sens</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 5: Mode Nuit Épuré -->
+                <div class="map-layer-option" data-layer-id="night">
+                  <div class="layer-preview night-preview">🌙</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Mode Nuit Épuré (Esri Dark)</div>
+                    <div class="layer-desc">Confort visuel nocturne, fond sombre reposant et haute lisibilité</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 6: OpenTopoMap Relief & Pentes -->
+                <div class="map-layer-option" data-layer-id="opentopo">
+                  <div class="layer-preview topo-preview">🏔️</div>
+                  <div class="layer-info">
+                    <div class="layer-name">OpenTopoMap (Relief & Dénivelé HD)</div>
+                    <div class="layer-desc">Courbes de niveau et ombrage des collines et côtes</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+
+                <!-- Layer 7: IGN Géoportail -->
+                <div class="map-layer-option" data-layer-id="ign">
+                  <div class="layer-preview ign-preview">🏛️</div>
+                  <div class="layer-info">
+                    <div class="layer-name">Plan IGN France Officiel</div>
+                    <div class="layer-desc">Cartographie nationale de référence (GEOPF)</div>
+                  </div>
+                  <span class="layer-check">✓</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===============================================================
+               VOLET 4 : GUIDAGE VOCAL & SYNTHÈSE VOCALE GPS
+               =============================================================== -->
+          <div class="accordion-item" id="acc-item-voice">
+            <button type="button" class="accordion-header" data-target="acc-body-voice">
+              <div class="acc-header-left">
+                <span class="acc-header-icon">🗣️</span>
+                <div class="acc-header-titles">
+                  <span class="acc-title">Guidage Vocal GPS</span>
+                  <span class="acc-subtitle" id="acc-voice-summary">Voix française active • Annonces virages</span>
+                </div>
+              </div>
+              <div class="acc-header-right">
+                <span class="acc-badge" id="acc-voice-badge">Actif</span>
+                <span class="acc-chevron">▼</span>
+              </div>
+            </button>
+
+            <div class="accordion-body" id="acc-body-voice">
+              <div class="voice-settings-box">
+                <!-- Master Voice Toggle -->
+                <label class="filter-toggle-card voice-master-card">
+                  <div class="filter-card-left">
+                    <span class="filter-card-icon" id="voice-master-icon">🗣️</span>
+                    <div>
+                      <div class="filter-card-title">Activer la voix de navigation</div>
+                      <div class="filter-card-desc">Annonces des virages, ronds-points, météo et alertes</div>
+                    </div>
+                  </div>
+                  <input type="checkbox" id="toggle-voice-enabled" checked>
+                  <span class="toggle-slider"></span>
+                </label>
+
+                <div id="voice-customizer-controls">
+                  <!-- Voice Selection Dropdown -->
+                  <div class="form-group">
+                    <label for="voice-select-dropdown">🎙️ Voix de synthèse (navigateur)</label>
+                    <select id="voice-select-dropdown" class="styled-select">
+                      <option value="">Chargement des voix disponibles...</option>
+                    </select>
+                  </div>
+
+                  <!-- Voice Speed (Rate) -->
+                  <div class="form-group">
+                    <div class="form-label-row">
+                      <label for="voice-rate-slider">⏩ Vitesse d'élocution</label>
+                      <span id="val-voice-rate" class="range-val-badge">1.05x</span>
+                    </div>
+                    <input type="range" id="voice-rate-slider" min="0.7" max="1.5" step="0.05" value="1.05" class="styled-range">
+                  </div>
+
+                  <!-- Voice Pitch (Tonalité) -->
+                  <div class="form-group">
+                    <div class="form-label-row">
+                      <label for="voice-pitch-slider">🎵 Tonalité (Pitch)</label>
+                      <span id="val-voice-pitch" class="range-val-badge">Neutre (1.0)</span>
+                    </div>
+                    <input type="range" id="voice-pitch-slider" min="0.5" max="1.5" step="0.1" value="1.0" class="styled-range">
+                  </div>
+
+                  <!-- Voice Volume -->
+                  <div class="form-group">
+                    <div class="form-label-row">
+                      <label for="voice-volume-slider">🔊 Volume sonore</label>
+                      <span id="val-voice-volume" class="range-val-badge">100%</span>
+                    </div>
+                    <input type="range" id="voice-volume-slider" min="0" max="100" step="5" value="100" class="styled-range">
+                  </div>
+
+                  <!-- Preview Audio Test Button -->
+                  <div class="voice-test-row">
+                    <button type="button" id="btn-test-voice" class="btn-primary full-width" style="display:flex; align-items:center; justify-content:center; gap:8px;">
+                      <span>🔊</span> Écouter un exemple de voix
+                    </button>
+                  </div>
+
+                  <!-- Voice Trigger Options -->
+                  <div class="voice-options-checklist">
+                    <span class="checklist-title">📢 Déclencheurs d'annonces :</span>
+                    <label class="check-option">
+                      <input type="checkbox" id="voice-opt-turns" checked>
+                      <span>Directions & Manœuvres (virages, ronds-points)</span>
+                    </label>
+                    <label class="check-option">
+                      <input type="checkbox" id="voice-opt-weather" checked>
+                      <span>Alertes météo & Chaussée glissante</span>
+                    </label>
+                    <label class="check-option">
+                      <input type="checkbox" id="voice-opt-hazards" checked>
+                      <span>Dangers signalés & Prises 230V à proximité</span>
+                    </label>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ===============================================================
+               VOLET 5 : MES TRAJETS & HISTORIQUE (STYLE GEOVELO)
+               =============================================================== -->
+          <div class="accordion-item" id="acc-item-rides">
+            <button type="button" class="accordion-header" data-target="acc-body-rides">
+              <div class="acc-header-left">
+                <span class="acc-header-icon">📖</span>
+                <div class="acc-header-titles">
+                  <span class="acc-title">Mes Trajets Enregistrés</span>
+                  <span class="acc-subtitle" id="acc-rides-summary">Historique des sorties & export GPX</span>
+                </div>
+              </div>
+              <div class="acc-header-right">
+                <span class="acc-badge" id="acc-rides-badge">0 trajet</span>
+                <span class="acc-chevron">▼</span>
+              </div>
+            </button>
+
+            <div class="accordion-body" id="acc-body-rides">
+              <div class="rides-global-stats">
+                <div class="rides-stat-box">
+                  <span class="rides-stat-val" id="global-stat-km">0.0 km</span>
+                  <span class="rides-stat-lbl">Distance</span>
+                </div>
+                <div class="rides-stat-box">
+                  <span class="rides-stat-val" id="global-stat-time">0h 00</span>
+                  <span class="rides-stat-lbl">Temps</span>
+                </div>
+                <div class="rides-stat-box">
+                  <span class="rides-stat-val" id="global-stat-avg-speed">0.0 km/h</span>
+                  <span class="rides-stat-lbl">Vitesse Moy.</span>
+                </div>
+                <div class="rides-stat-box">
+                  <span class="rides-stat-val" id="global-stat-trips-count">0</span>
+                  <span class="rides-stat-lbl">Sorties</span>
+                </div>
+              </div>
+
+              <div class="rides-header-row">
+                <span class="rides-list-title">Historique de vos trajets</span>
+                <button id="btn-clear-all-rides" class="btn-micro danger" title="Effacer l'historique">🗑️ Tout effacer</button>
+              </div>
+
+              <div id="rides-history-list" class="rides-cards-list">
+                <div class="rides-empty-state">
+                  <span class="empty-icon">🛴</span>
+                  <p>Aucun trajet enregistré pour le moment.</p>
+                  <span class="empty-sub">Appuyez sur le bouton rouge 🔴 pour enregistrer votre prochaine sortie !</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div> <!-- End of Accordion -->
+      </div>
+    </div>
+
+    <!-- Report Hazard / Charging Station Modal (Popup Waze) -->
+    <div id="report-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel">
+        <div class="modal-header">
+          <div class="modal-title">Signaler sur la carte</div>
+          <button id="btn-close-report" class="icon-btn">✕</button>
+        </div>
+        <p class="modal-subtitle">Alertez la communauté des trottinettistes en direct</p>
+        
+        <div class="hazard-grid">
+          <button class="hazard-choice-btn" data-type="charge">
+            <span class="hz-icon">⚡</span>
+            <span class="hz-label">Prise 230V / Chargeur</span>
+            <span class="hz-desc">Borne publique, café vélo, prise auto 230V</span>
+          </button>
+          <button class="hazard-choice-btn" data-type="pothole">
+            <span class="hz-icon">🕳️</span>
+            <span class="hz-label">Nid-de-poule / Pavés</span>
+            <span class="hz-desc">Trou, fente, sol dangereux</span>
+          </button>
+          <button class="hazard-choice-btn" data-type="blocked">
+            <span class="hz-icon">🚧</span>
+            <span class="hz-label">Piste fermée / Travaux</span>
+            <span class="hz-desc">Chantier, barrières, débris</span>
+          </button>
+          <button class="hazard-choice-btn" data-type="police">
+            <span class="hz-icon">👮</span>
+            <span class="hz-label">Contrôle de police</span>
+            <span class="hz-desc">Vitesse, casque, trottoir</span>
+          </button>
+          <button class="hazard-choice-btn" data-type="car">
+            <span class="hz-icon">🚗</span>
+            <span class="hz-label">Voiture garée</span>
+            <span class="hz-desc">Obstruction sur la voie</span>
+          </button>
+          <button class="hazard-choice-btn" data-type="repair">
+            <span class="hz-icon">🧰</span>
+            <span class="hz-label">Station gonflage</span>
+            <span class="hz-desc">Pompe publique ou atelier</span>
+          </button>
+        </div>
+
+        <div class="report-form-footer">
+          <input type="text" id="report-comment" placeholder="Précision (ex: prise 230V gratuite en façade, accès libre)">
+          <button id="btn-submit-report" class="btn-primary full-width" disabled>Valider le signalement</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         VERIFIED CYCLEWAYS EXPLORER MODAL (Pistes Cyclables Sécurisées & Certifiées)
+         ===================================================================== -->
+    <div id="cycleways-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel cycleways-modal-card">
+        <div class="modal-header">
+          <div class="modal-title">🛡️ Pistes Cyclables 100% Sûres</div>
+          <button id="btn-close-cycleways" class="icon-btn">✕</button>
+        </div>
+        <p class="modal-subtitle">Infrastructures cyclables certifiées, séparées des voitures et 100% goudronnées</p>
+
+        <!-- Search / Filter input inside modal -->
+        <div class="cycleways-search-bar">
+          <input type="text" id="cycleways-filter-input" placeholder="Filtrer par ville ou nom (ex: Paris, Rivoli, Lyon, Quais...)" autocomplete="off">
+        </div>
+
+        <!-- City Filter Chips -->
+        <div class="cycleways-city-chips" id="cycleways-city-chips">
+          <button class="cycleway-chip active" data-city="all">🌍 Toutes</button>
+          <button class="cycleway-chip" data-city="Paris">📍 Paris / IDF</button>
+          <button class="cycleway-chip" data-city="Lyon">📍 Lyon</button>
+          <button class="cycleway-chip" data-city="Bordeaux">📍 Bordeaux</button>
+          <button class="cycleway-chip" data-city="Toulouse">📍 Toulouse</button>
+          <button class="cycleway-chip" data-city="Strasbourg">📍 Strasbourg</button>
+          <button class="cycleway-chip" data-city="Nantes">📍 Nantes</button>
+          <button class="cycleway-chip" data-city="Nice">📍 Nice</button>
+          <button class="cycleway-chip" data-city="Marseille">📍 Marseille</button>
+        </div>
+
+        <!-- List of verified tracks -->
+        <div class="cycleways-list-container" id="cycleways-list-container">
+          <!-- Dynamically populated -->
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         AUTHENTICATION & USER PROFILE MODAL (Connexion, Inscription, Reset Email, Profil)
+         ===================================================================== -->
+    <div id="auth-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel auth-modal-card">
+        <div class="modal-header">
+          <div class="modal-title" id="auth-modal-title">👤 Mon Compte TrottiWaze</div>
+          <button id="btn-close-auth" class="icon-btn">✕</button>
+        </div>
+
+        <!-- Auth Tabs Navigation -->
+        <div class="auth-nav-tabs" id="auth-nav-tabs-container">
+          <button class="auth-tab-btn active" data-auth-tab="auth-login">Connexion</button>
+          <button class="auth-tab-btn" data-auth-tab="auth-signup">Créer un compte</button>
+          <button class="auth-tab-btn" data-auth-tab="auth-reset">Mot de passe oublié</button>
+          <button class="auth-tab-btn" data-auth-tab="auth-profile" style="display: none;">Mon Profil</button>
+        </div>
+
+        <!-- Tab 1: Login -->
+        <div id="pane-auth-login" class="auth-tab-pane active">
+          <form id="form-auth-login" onsubmit="return false;">
+            <div class="form-group">
+              <label for="login-identifier">👤 Nom d'utilisateur ou Email</label>
+              <input type="text" id="login-identifier" placeholder="ex: MaxRider ou rider@email.com" class="styled-text-input" required autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label for="login-password">🔒 Mot de passe</label>
+              <input type="password" id="login-password" placeholder="Votre mot de passe" class="styled-text-input" required autocomplete="current-password">
+            </div>
+            
+            <button type="submit" id="btn-submit-login" class="btn-primary full-width" style="margin-top: 10px;">Se connecter</button>
+            
+            <div class="auth-helper-links">
+              <a href="#" id="link-goto-reset" class="auth-link">Mot de passe oublié ? Réinitialiser par email</a>
+              <a href="#" id="link-goto-signup" class="auth-link">Pas encore de compte ? S'inscrire</a>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tab 2: Signup (Créer un compte) -->
+        <div id="pane-auth-signup" class="auth-tab-pane">
+          <form id="form-auth-signup" onsubmit="return false;">
+            <div class="form-group">
+              <label for="signup-username">👤 Nom d'utilisateur / Pseudo</label>
+              <input type="text" id="signup-username" placeholder="ex: TrottiRider75" class="styled-text-input" required autocomplete="username">
+            </div>
+            <div class="form-group">
+              <label for="signup-email">📧 Adresse Email (pour récupération de compte)</label>
+              <input type="email" id="signup-email" placeholder="ex: contact@exemple.fr" class="styled-text-input" required autocomplete="email">
+            </div>
+
+            <!-- Avatar Picker -->
+            <div class="form-group">
+              <label>🎨 Choisissez votre avatar de rider</label>
+              <div class="avatar-picker-grid" id="signup-avatar-grid">
+                <button type="button" class="avatar-choice-btn active" data-avatar="🦊">🦊</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🛴">🛴</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="⚡">⚡</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🦁">🦁</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🚀">🚀</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🐱">🐱</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🚴">🚴</button>
+                <button type="button" class="avatar-choice-btn" data-avatar="🥷">🥷</button>
+              </div>
+            </div>
+
+            <div class="form-group">
+              <label for="signup-password">🔒 Mot de passe (6 caractères min.)</label>
+              <input type="password" id="signup-password" placeholder="Mot de passe sécurisé" minlength="6" class="styled-text-input" required autocomplete="new-password">
+            </div>
+            <div class="form-group">
+              <label for="signup-password-confirm">🔒 Confirmez le mot de passe</label>
+              <input type="password" id="signup-password-confirm" placeholder="Répétez le mot de passe" minlength="6" class="styled-text-input" required autocomplete="new-password">
+            </div>
+
+            <button type="submit" id="btn-submit-signup" class="btn-primary full-width" style="margin-top: 10px;">✨ Créer mon compte</button>
+            <div class="auth-helper-links">
+              <a href="#" id="link-goto-login-from-signup" class="auth-link">Déjà un compte ? Se connecter</a>
+            </div>
+          </form>
+        </div>
+
+        <!-- Tab 3: Password Reset via Email OTP -->
+        <div id="pane-auth-reset" class="auth-tab-pane">
+          <!-- Step 1: Request Email Reset Code -->
+          <div id="reset-step-1">
+            <p class="tab-subtitle">Entrez l'adresse email associée à votre compte. Nous vous enverrons un code de validation à 6 chiffres :</p>
+            <form id="form-reset-step-1" onsubmit="return false;">
+              <div class="form-group">
+                <label for="reset-email-input">📧 Votre adresse Email</label>
+                <input type="email" id="reset-email-input" placeholder="ex: moncompte@email.com" class="styled-text-input" required>
+              </div>
+              <button type="submit" id="btn-send-reset-code" class="btn-primary full-width" style="margin-top: 10px;">
+                📨 Envoyer le code par email
+              </button>
+            </form>
+          </div>
+
+          <!-- Step 2: Validate OTP & Set New Password -->
+          <div id="reset-step-2" style="display: none;">
+            <div class="email-simulator-banner" id="email-simulator-box">
+              <div class="sim-banner-top">
+                <span>📬 Simulation Boîte Mail</span>
+                <span class="sim-pill">Nouveau Message</span>
+              </div>
+              <div class="sim-banner-body">
+                <strong>De :</strong> security@trottiwaze.app<br>
+                <strong>Objet :</strong> Votre code de réinitialisation de mot de passe<br>
+                <div class="sim-otp-code" id="sim-display-otp">482910</div>
+                <small class="sim-otp-hint">Copiez ou saisissez ce code à 6 chiffres ci-dessous.</small>
+              </div>
+            </div>
+
+            <form id="form-reset-step-2" onsubmit="return false;">
+              <div class="form-group">
+                <label for="reset-otp-input">🔑 Code de vérification à 6 chiffres</label>
+                <input type="text" id="reset-otp-input" inputmode="numeric" maxlength="6" placeholder="ex: 482910" class="styled-text-input text-center font-mono" style="letter-spacing: 4px; font-size: 16px;" required>
+              </div>
+              <div class="form-group">
+                <label for="reset-new-password">🔒 Nouveau mot de passe</label>
+                <input type="password" id="reset-new-password" placeholder="Nouveau mot de passe" minlength="6" class="styled-text-input" required autocomplete="new-password">
+              </div>
+              <div class="form-group">
+                <label for="reset-new-password-confirm">🔒 Confirmer le nouveau mot de passe</label>
+                <input type="password" id="reset-new-password-confirm" placeholder="Répéter le mot de passe" minlength="6" class="styled-text-input" required autocomplete="new-password">
+              </div>
+              <button type="submit" id="btn-confirm-password-reset" class="btn-primary full-width" style="margin-top: 10px;">
+                ✅ Valider mon nouveau mot de passe
+              </button>
+            </form>
+          </div>
+
+          <div class="auth-helper-links">
+            <a href="#" id="link-back-to-login" class="auth-link">← Retour à la connexion</a>
+          </div>
+        </div>
+
+        <!-- Tab 4: Connected Profile View -->
+        <div id="pane-auth-profile" class="auth-tab-pane">
+          <div class="profile-header-card">
+            <div class="profile-avatar-large" id="profile-avatar-display">🦊</div>
+            <div class="profile-user-info">
+              <div class="profile-username" id="profile-username-display">RiderConnecté</div>
+              <div class="profile-email" id="profile-email-display">rider@trottiwaze.fr</div>
+              <span class="profile-rank-badge">🏆 TrottiWazer Vérifié</span>
+            </div>
+          </div>
+
+          <div class="profile-stats-grid">
+            <div class="profile-stat-box">
+              <span class="stat-number" id="prof-stat-km">0.0 km</span>
+              <span class="stat-caption">Distance totale</span>
+            </div>
+            <div class="profile-stat-box">
+              <span class="stat-number" id="prof-stat-rides">0</span>
+              <span class="stat-caption">Trajets effectués</span>
+            </div>
+            <div class="profile-stat-box">
+              <span class="stat-number" id="prof-stat-scooter">1 modèle</span>
+              <span class="stat-caption">Trottinettes</span>
+            </div>
+            <div class="profile-stat-box">
+              <span class="stat-number" id="prof-stat-reports">0</span>
+              <span class="stat-caption">Signalements</span>
+            </div>
+          </div>
+
+          <div class="profile-actions-stack">
+            <button id="btn-auth-export-data" class="btn-micro" style="padding: 9px 14px;">📥 Exporter toutes mes données (JSON)</button>
+            <button id="btn-auth-logout" class="btn-micro warning" style="padding: 9px 14px;">🚪 Se déconnecter</button>
+            <button id="btn-auth-delete-account" class="btn-micro danger" style="padding: 9px 14px;">🗑️ Supprimer mon compte</button>
+          </div>
+        </div>
+
+      </div>
+    </div> <!-- /#auth-modal properly closed -->
+
+    <!-- Quick Map Style Modal (Changement de carte en 1 clic à tout moment) -->
+    <div id="quick-map-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 380px;">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">🗺️ Changer le style de carte</div>
+            <div class="modal-subtitle">Basculer immédiatement sans interrompre le trajet</div>
+          </div>
+          <button id="btn-close-quick-map" class="icon-btn">✕</button>
+        </div>
+        <div class="quick-map-grid" style="padding: 14px; display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px;">
+          <button class="quick-map-tile active" data-map="satellite">
+            <span class="map-tile-icon">🛰️</span>
+            <span class="map-tile-name">Satellite HD</span>
+            <span class="map-tile-sub">Vue Aérienne Esri</span>
+          </button>
+          <button class="quick-map-tile" data-map="streets">
+            <span class="map-tile-icon">🏙️</span>
+            <span class="map-tile-name">Rues Esri GPS</span>
+            <span class="map-tile-sub">Style Ville Urbain</span>
+          </button>
+          <button class="quick-map-tile" data-map="cyclosm">
+            <span class="map-tile-icon">🚴</span>
+            <span class="map-tile-name">CyclOSM</span>
+            <span class="map-tile-sub">Pistes & Détails</span>
+          </button>
+          <button class="quick-map-tile" data-map="night">
+            <span class="map-tile-icon">🌙</span>
+            <span class="map-tile-name">Nuit Sombre</span>
+            <span class="map-tile-sub">Esri Dark Épuré</span>
+          </button>
+          <button class="quick-map-tile" data-map="osm">
+            <span class="map-tile-icon">🌐</span>
+            <span class="map-tile-name">OSM Standard</span>
+            <span class="map-tile-sub">Cartographie Libre</span>
+          </button>
+          <button class="quick-map-tile" data-map="opentopo">
+            <span class="map-tile-icon">🏔️</span>
+            <span class="map-tile-name">Relief Topo</span>
+            <span class="map-tile-sub">Dénivelé & Pentes</span>
+          </button>
+        </div>
+      </div>
+    </div> <!-- /#quick-map-modal properly closed -->
+
+    <!-- Modal Guide : Localisation Définitive dans le Navigateur -->
+    <div id="gps-guide-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 440px;">
+        <div class="modal-header">
+          <div class="modal-title-box">
+            <div class="modal-title">📍 Accès Localisation Définitif</div>
+            <div class="modal-subtitle">Comment ne plus avoir la demande à chaque visite</div>
+          </div>
+          <button id="btn-close-gps-guide" class="icon-btn">✕</button>
+        </div>
+        <div class="gps-guide-body" style="padding: 16px; font-size: 13px; line-height: 1.5;">
+          <div class="gps-guide-step">
+            <div class="gps-step-num">1</div>
+            <div class="gps-step-text">
+              <strong>Dans la fenêtre de demande du navigateur :</strong><br>
+              Sélectionnez systématiquement <strong>« Toujours autoriser sur ce site »</strong> (ou cochez <em>« Mémoriser ce choix »</em>) au lieu de « Cette fois-ci ».
+            </div>
+          </div>
+          <div class="gps-guide-step" style="margin-top: 14px;">
+            <div class="gps-step-num">2</div>
+            <div class="gps-step-text">
+              <strong>Ou via la barre d'adresse (en 2 clics) :</strong><br>
+              Cliquez sur l'icône <strong>🔒 Cadenas</strong> (ou <strong>⚙️ Réglages du site</strong>) située tout à gauche de l'adresse URL en haut.<br>
+              Sur la ligne <strong>Localisation (Position)</strong>, choisissez <strong>« Toujours autoriser »</strong>.
+            </div>
+          </div>
+          <div class="gps-guide-step" style="margin-top: 14px;">
+            <div class="gps-step-num">3</div>
+            <div class="gps-step-text">
+              <strong>C'est mémorisé définitivement :</strong><br>
+              Le navigateur retient ce réglage pour TrottiWaze. Vous ne recevrez plus aucune demande à vos prochaines connexions !
+            </div>
+          </div>
+          <div style="margin-top: 20px; display: flex; gap: 10px;">
+            <button type="button" id="btn-guide-trigger-gps" class="btn-primary" style="flex: 1; padding: 10px; border-radius: 12px; font-weight: 700;">
+              📍 Lancer la demande maintenant
+            </button>
+            <button type="button" id="btn-guide-ok" class="btn-secondary" style="padding: 10px 16px; border-radius: 12px;">
+              Compris
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Confirmation Création Itinéraire / Poser Repère (Double-clic sur la carte) -->
+    <div id="itinerary-confirm-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 400px; text-align: center;">
+        <div class="modal-header" style="justify-content: center; position: relative;">
+          <div class="modal-title-box">
+            <div class="modal-title">🗺️ Créer un itinéraire ?</div>
+            <div class="modal-subtitle" id="itinerary-confirm-location-text">Destination sélectionnée</div>
+          </div>
+          <button id="btn-close-itinerary-confirm" class="icon-btn" style="position: absolute; right: 12px; top: 12px;">✕</button>
+        </div>
+        <div style="padding: 16px;">
+          <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 18px; line-height: 1.45;">
+            Souhaitez-vous calculer et lancer un itinéraire vers cet endroit, ou poser un point de repère sur la carte ?
+          </p>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button type="button" id="btn-confirm-create-route" class="btn-primary" style="padding: 12px; border-radius: 12px; font-weight: 700; font-size: 13px; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              🚀 Oui, créer l'itinéraire
+            </button>
+            <button type="button" id="btn-refuse-create-route" class="btn-secondary" style="padding: 11px; border-radius: 12px; font-weight: 600; font-size: 12.5px; display: flex; align-items: center; justify-content: center; gap: 8px; background: rgba(59, 130, 246, 0.15); border: 1px solid rgba(59, 130, 246, 0.35); color: #60a5fa;">
+              🚩 Non, poser un repère sur la carte
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Confirmation Suppression Point de Repère (Double-clic sur le repère) -->
+    <div id="landmark-delete-modal" class="modal-backdrop" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 380px; text-align: center;">
+        <div class="modal-header" style="justify-content: center; position: relative;">
+          <div class="modal-title-box">
+            <div class="modal-title">🗑️ Supprimer le repère ?</div>
+            <div class="modal-subtitle" id="landmark-delete-location-text">Point de repère personnalisé</div>
+          </div>
+          <button id="btn-close-landmark-delete" class="icon-btn" style="position: absolute; right: 12px; top: 12px;">✕</button>
+        </div>
+        <div style="padding: 16px;">
+          <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 18px; line-height: 1.45;">
+            Voulez-vous supprimer définitivement ce point de repère de votre carte ?
+          </p>
+          <div style="display: flex; gap: 10px;">
+            <button type="button" id="btn-confirm-delete-landmark" class="btn-danger" style="flex: 1; padding: 11px; border-radius: 12px; font-weight: 700; font-size: 13px; background: linear-gradient(135deg, #ef4444 0%, #dc2626 100%); color: #fff; border: none; cursor: pointer; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4);">
+              🗑️ Supprimer
+            </button>
+            <button type="button" id="btn-cancel-delete-landmark" class="btn-secondary" style="flex: 1; padding: 11px; border-radius: 12px; font-weight: 600; font-size: 13px;">
+              Annuler
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Modal Prévention Sécurité (> 50 km/h) avant de valider l'itinéraire -->
+    <div id="speed-prevention-modal" class="modal-backdrop modal-backdrop-transparent" style="display: none;">
+      <div class="modal-card glass-panel" style="max-width: 410px; text-align: center;">
+        <div class="modal-header" style="justify-content: center; position: relative;">
+          <div class="modal-title-box">
+            <div class="modal-title" style="color: #fbbf24; display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span>⚠️</span> Rappel de Sécurité
+            </div>
+            <div class="modal-subtitle" id="speed-prevention-roads-subtitle">Voies à circulation rapide détectées</div>
+          </div>
+          <button id="btn-close-speed-prevention" class="icon-btn" style="position: absolute; right: 12px; top: 12px;">✕</button>
+        </div>
+        <div style="padding: 16px;">
+          <p style="font-size: 13px; color: #cbd5e1; margin-bottom: 14px; line-height: 1.5; text-align: left;">
+            Cet itinéraire comporte des portions où les véhicules roulent à plus de <strong>50 km/h</strong> (<span id="speed-prevention-road-names" style="color: #fde68a; font-weight: 600;">axes rapides</span>).
+          </p>
+          <div style="background: rgba(245, 158, 11, 0.1); border: 1px solid rgba(245, 158, 11, 0.3); border-radius: 12px; padding: 10px 12px; text-align: left; margin-bottom: 18px; font-size: 12px; color: #fef08a; line-height: 1.45;">
+            💡 <strong>Conseils pour votre trajet :</strong>
+            <ul style="margin: 6px 0 0 16px; padding: 0;">
+              <li>Privilégiez impérativement les pistes ou bandes cyclables.</li>
+              <li>Redoublez de prudence aux carrefours et sorties.</li>
+              <li>Vous pouvez aussi choisir l'itinéraire <strong>🟢 Sécurisé (Pistes)</strong>.</li>
+            </ul>
+          </div>
+          <div style="display: flex; flex-direction: column; gap: 10px;">
+            <button type="button" id="btn-prevention-confirm-start" class="btn-primary" style="padding: 12px; border-radius: 12px; font-weight: 700; font-size: 13px; background: #10b981; border: none; cursor: pointer; color: white;">
+              🚀 Compris, démarrer la navigation
+            </button>
+            <button type="button" id="btn-prevention-change-route" class="btn-secondary" style="padding: 10px; border-radius: 12px; font-weight: 600; font-size: 12.5px; border: 1px solid rgba(255,255,255,0.2); background: rgba(255,255,255,0.06); color: #cbd5e1; cursor: pointer;">
+              ↩️ Choisir un autre itinéraire
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div> <!-- /#app-container -->
+
+  <!-- Scripts -->
+  <script src="bundle.js?v=4"></script>
+</body>
+</html>
