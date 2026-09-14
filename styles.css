@@ -2675,9 +2675,10 @@ body.nav-head-up-active #map {
   position: absolute !important;
   width: 260vmax !important;
   height: 260vmax !important;
-  top: calc(64vh - 130vmax) !important;
+  top: calc(50vh - 130vmax) !important;
   left: calc(50vw - 130vmax) !important;
-  transition: transform 0.35s ease-out !important;
+  transition: none !important;
+  will-change: transform;
 }
 
 .hazard-alert-banner {
@@ -2760,7 +2761,8 @@ body.nav-head-up-active #map {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.2s ease;
+  transition: none !important;
+  will-change: transform;
 }
 
 .scooter-beam {
@@ -3787,7 +3789,7 @@ body.nav-head-up-active #map {
   display: flex;
   align-items: center;
   justify-content: center;
-  transition: transform 0.25s cubic-bezier(0.2, 0.8, 0.2, 1);
+  transition: none !important;
   will-change: transform;
 }
 
@@ -5291,3 +5293,35 @@ body.nav-head-up-active #map {
     box-shadow: 0 0 0 4px rgba(245, 158, 11, 0);
   }
 }
+
+/* Roundabout & Navigation Maneuver Badges */
+.nav-roundabout-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+}
+
+.nav-roundabout-exit-num {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  font-family: var(--font-mono, 'JetBrains Mono', monospace);
+  font-size: 14px;
+  font-weight: 900;
+  color: #10b981;
+  background: rgba(13, 17, 23, 0.92);
+  border: 1.5px solid #10b981;
+  border-radius: 50%;
+  width: 21px;
+  height: 21px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.4);
+}
+

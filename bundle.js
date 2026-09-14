@@ -2084,7 +2084,7 @@
     }
 
     createTileLayer(layerId) {
-      const tileOpts = { maxZoom: 20, crossOrigin: true };
+      const tileOpts = { maxZoom: 20, crossOrigin: true, keepBuffer: 8 };
       switch (layerId) {
         case 'satellite':
           // Esri High-Resolution World Satellite Imagery (100% free, zero watermark)
@@ -2266,20 +2266,14 @@
         }
         const compassIcon = document.getElementById('compass-icon');
         if (compassIcon) compassIcon.style.transform = `rotate(${-heading}deg)`;
+      }
 
-        if (this.isAutoFollowing && this.map) {
-          // Centered directly on [lat, lng] so the scooter stays the exact focal and rotation pivot point
-          const curCenter = this.map.getCenter();
-          const distM = curCenter ? this.map.distance(curCenter, [lat, lng]) : 10;
-          if (distM > 0.6) {
-            this.map.panTo([lat, lng], { animate: true, duration: 0.35, easeLinearity: 0.4 });
-          }
-        }
-      } else if (this.isAutoFollowing && this.map) {
+      if (this.isAutoFollowing && this.map) {
         const curCenter = this.map.getCenter();
         const distM = curCenter ? this.map.distance(curCenter, [lat, lng]) : 10;
-        if (distM > 0.6) {
-          this.map.panTo([lat, lng], { animate: true, duration: 0.35, easeLinearity: 0.4 });
+        const targetZoom = isHeadUp ? Math.max(18, this.map.getZoom()) : this.map.getZoom();
+        if (distM > 0.04 || this.map.getZoom() !== targetZoom) {
+          this.map.setView([lat, lng], targetZoom, { animate: false });
         }
       }
     }
@@ -2512,17 +2506,20 @@
 
     fitRouteOverview(coordinates) {
       if (!coordinates || coordinates.length === 0) return;
+      if (document.body.classList.contains('nav-head-up-active')) return;
       this._applyFitBounds(coordinates);
 
       // Re-run after CSS layout and sheet slide animation completes to guarantee 100% visible framing
       if (this._fitOverviewTimer) clearTimeout(this._fitOverviewTimer);
       this._fitOverviewTimer = setTimeout(() => {
+        if (document.body.classList.contains('nav-head-up-active')) return;
         this._applyFitBounds(coordinates);
       }, 220);
     }
 
     _applyFitBounds(coordinates) {
       if (!coordinates || coordinates.length === 0 || !this.map) return;
+      if (document.body.classList.contains('nav-head-up-active')) return;
       this.map.invalidateSize();
 
       // 1. Calcul précis de la distance réelle du tracé (en km)
@@ -2987,12 +2984,47 @@
               }
             }
 
+            const mType = s.maneuver ? s.maneuver.type : 'straight';
+            const mMod = s.maneuver ? s.maneuver.modifier : 'straight';
+            const mExit = s.maneuver ? s.maneuver.exit : null;
+            const mLocation = s.maneuver && s.maneuver.location ? s.maneuver.location : null;
+
+            let customInstruction = '';
+            if (mType === 'arrive') {
+              customInstruction = 'Vous êtes arrivé à destination !';
+            } else if (mType === 'roundabout' || mType === 'rotary' || /(rond[- ]?point|giratoire)/i.test(rawName)) {
+              customInstruction = mExit ? `Au rond-point, prenez la ${mExit}e sortie` : 'Au rond-point, suivez la direction';
+              if (rawName) customInstruction += ` sur ${rawName}`;
+            } else if (mMod === 'uturn') {
+              customInstruction = 'Faites demi-tour dès que possible';
+            } else if (mMod === 'sharp right') {
+              customInstruction = `Tournez fortement à droite${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mMod === 'right') {
+              customInstruction = `Tournez à droite${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mMod === 'slight right') {
+              customInstruction = `Serrez à droite${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mMod === 'sharp left') {
+              customInstruction = `Tournez fortement à gauche${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mMod === 'left') {
+              customInstruction = `Tournez à gauche${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mMod === 'slight left') {
+              customInstruction = `Serrez à gauche${rawName ? ' sur ' + rawName : ''}`;
+            } else if (mType === 'fork') {
+              customInstruction = `Prenez l'embranchement ${mMod === 'left' ? 'à gauche' : 'à droite'}${rawName ? ' sur ' + rawName : ''}`;
+            } else {
+              customInstruction = rawName ? `Continuez sur ${rawName}` : 'Continuez tout droit';
+            }
+
             return {
-              instruction: s.maneuver.type === 'arrive' ? 'Vous êtes arrivé à destination' : (rawName ? `Prenez ${rawName}` : 'Continuez tout droit'),
+              instruction: customInstruction,
               distanceMeters: Math.round(s.distance),
               street: rawName || rawRef || 'Voie aménagée',
               ref: rawRef,
-              modifier: s.maneuver.modifier || (s.maneuver.type === 'arrive' ? 'arrive' : 'straight'),
+              modifier: mMod || (mType === 'arrive' ? 'arrive' : 'straight'),
+              maneuverType: mType,
+              exit: mExit,
+              lat: mLocation ? mLocation[1] : null,
+              lng: mLocation ? mLocation[0] : null,
               safety: isMway ? '⛔ Autoroute interdite' : (isOver50 ? '⚠️ Route > 50 km/h' : '🟢 Voie cyclable / urbaine'),
               isMotorway: isMway,
               isOver50: isOver50
@@ -3356,14 +3388,16 @@
         setTimeout(() => this.mapManager.map.invalidateSize(), 120);
       }
 
-      // Pre-feed Turn-By-Turn HUD with first step immediately
       if (route.steps && route.steps.length > 0 && this.onStepUpdate) {
         const firstStep = route.steps[0];
         this.onStepUpdate({
           distanceMeters: firstStep.distanceMeters || 100,
           street: firstStep.street || 'Prendre la route',
           instruction: firstStep.instruction || 'Prendre la route',
-          modifier: firstStep.modifier || 'straight'
+          modifier: firstStep.modifier || 'straight',
+          maneuverType: firstStep.maneuverType || 'straight',
+          exit: firstStep.exit || null,
+          isOver50: firstStep.isOver50 || false
         });
       }
 
@@ -3405,7 +3439,15 @@
       this.announcedTurn35 = false;
 
       const coords = newRoute.coordinates || [];
-      if (this.isSimulated && coords.length > 0) {
+      if (this.isSimulated && coords.length > 1) {
+        this.simCumulativeDist = [0];
+        this.simTotalDistMeters = 0;
+        for (let i = 0; i < coords.length - 1; i++) {
+          const dM = this.calculateDistance(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1]) * 1000;
+          this.simTotalDistMeters += dM;
+          this.simCumulativeDist.push(this.simTotalDistMeters);
+        }
+
         // Seamlessly snap simulation cursor to the closest point along the new route
         let bestIdx = 0;
         let minDist = Infinity;
@@ -3422,7 +3464,8 @@
             bestIdx = i;
           }
         }
-        this.simIndex = bestIdx;
+        this.simSegIndex = Math.min(bestIdx, coords.length - 2);
+        this.simCurrentDistMeters = this.simCumulativeDist[this.simSegIndex] || 0;
       }
 
       // Pre-feed Turn-By-Turn HUD with first step of new route
@@ -3432,7 +3475,10 @@
           distanceMeters: firstStep.distanceMeters || 100,
           street: firstStep.street || 'Suivre le nouvel itinéraire',
           instruction: firstStep.instruction || 'Suivre le nouvel itinéraire',
-          modifier: firstStep.modifier || 'straight'
+          modifier: firstStep.modifier || 'straight',
+          maneuverType: firstStep.maneuverType || 'straight',
+          exit: firstStep.exit || null,
+          isOver50: firstStep.isOver50 || false
         });
       }
 
@@ -3449,124 +3495,221 @@
     }
 
     startSimulation() {
-      const coords = this.activeRoute.coordinates;
-      if (!coords || coords.length === 0) return;
-      if (this.simInterval) clearInterval(this.simInterval);
+      const coords = this.activeRoute && this.activeRoute.coordinates ? this.activeRoute.coordinates : [];
+      if (!coords || coords.length < 2) return;
+      if (this.simRafId) {
+        cancelAnimationFrame(this.simRafId);
+        this.simRafId = null;
+      }
+      if (this.simInterval) {
+        clearInterval(this.simInterval);
+        this.simInterval = null;
+      }
 
-      this.simInterval = setInterval(() => {
-        if (this.isPaused) return;
+      // Precalculate cumulative distances in meters along the route polyline
+      this.simCumulativeDist = [0];
+      this.simTotalDistMeters = 0;
+      for (let i = 0; i < coords.length - 1; i++) {
+        const dM = this.calculateDistance(coords[i][0], coords[i][1], coords[i+1][0], coords[i+1][1]) * 1000;
+        this.simTotalDistMeters += dM;
+        this.simCumulativeDist.push(this.simTotalDistMeters);
+      }
 
-        if (this.simIndex >= coords.length) {
-          this.stopNavigation();
-          if (this.onArrival) this.onArrival();
-          return;
-        }
+      if (this.simCurrentDistMeters === undefined) this.simCurrentDistMeters = 0;
+      if (this.simSegIndex === undefined) this.simSegIndex = 0;
 
-        const currentPt = coords[this.simIndex];
+      let lastTimestamp = performance.now();
+      let lastTelemetryTime = 0;
+      let lastTrackRecordDist = this.simCurrentDistMeters || 0;
 
-        // Scan ahead for the next distinct point at least 5 meters away to compute rock-solid forward heading
-        let nextPt = coords[Math.min(coords.length - 1, this.simIndex + 1)];
-        for (let k = this.simIndex + 1; k < Math.min(coords.length, this.simIndex + 8); k++) {
-          if (this.calculateDistance(currentPt[0], currentPt[1], coords[k][0], coords[k][1]) > 0.005) {
-            nextPt = coords[k];
-            break;
-          }
-        }
+      const loop = (timestamp) => {
+        if (!this.isNavigating || !this.isSimulated) return;
 
-        let targetHeading = this.calculateHeading(currentPt[0], currentPt[1], nextPt[0], nextPt[1]);
-        if (targetHeading === undefined || isNaN(targetHeading)) {
-          targetHeading = this.currentSimHeading || 0;
-        }
+        const dtSec = Math.min((timestamp - lastTimestamp) / 1000, 0.08);
+        lastTimestamp = timestamp;
 
-        // Smooth angular transition: responsive on turns so the road ahead stays aligned in front
-        if (this.currentSimHeading === undefined) {
-          this.currentSimHeading = targetHeading;
-        } else {
-          let diff = (targetHeading - this.currentSimHeading + 180) % 360 - 180;
-          if (diff < -180) diff += 360;
-          const smoothFactor = Math.abs(diff) > 25 ? 0.65 : 0.45;
-          this.currentSimHeading = (this.currentSimHeading + diff * smoothFactor + 360) % 360;
-        }
+        if (!this.isPaused && dtSec > 0) {
+          const baseSpeedKmh = this.batteryEngine.config.speedPrefKmh || 25;
+          // Natural slight speed variation around 24-25 km/h
+          const speedKmh = Math.round(baseSpeedKmh * (0.97 + Math.sin(timestamp / 1200) * 0.05));
+          const speedMps = (speedKmh / 3.6) * (this.simulationSpeedMultiplier || 1);
 
-        const heading = Math.round(this.currentSimHeading);
-        const baseSpeed = this.batteryEngine.config.speedPrefKmh || 25;
-        const speed = Math.round(baseSpeed * (0.95 + Math.random() * 0.08));
+          this.simCurrentDistMeters += speedMps * dtSec;
 
-        this.mapManager.updateScooterPosition(currentPt[0], currentPt[1], heading, speed);
-        if (this.compassManager) {
-          this.compassManager.setHeading(heading);
-        }
-
-        if (this.rideRecorder && this.rideRecorder.isRecording) {
-          this.rideRecorder.addGpsPoint(currentPt[0], currentPt[1], speed, 35);
-          this.mapManager.drawLiveTrackPoint(currentPt[0], currentPt[1]);
-        }
-
-        if (this.onSpeedUpdate) this.onSpeedUpdate(speed);
-
-        // Progress along coordinates
-        const progress = this.simIndex / coords.length;
-        const remDist = Math.max(0, (this.activeRoute.distanceKm * (1 - progress))).toFixed(1);
-        const remMin = Math.max(1, Math.round(this.activeRoute.durationMin * (1 - progress)));
-        const batteryStatus = this.batteryEngine.estimateTrip(parseFloat(remDist), 5);
-
-        if (this.onTripUpdate) {
-          this.onTripUpdate({ remainingDistKm: remDist, remainingMin: remMin, batteryStatus });
-        }
-
-        // Real-time Turn-By-Turn step distance calculation & progression
-        const steps = this.activeRoute.steps || [];
-        if (steps.length > 0) {
-          if (this.currentStepIndex >= steps.length) {
-            this.currentStepIndex = steps.length - 1;
+          if (this.simCurrentDistMeters >= this.simTotalDistMeters) {
+            const endPt = coords[coords.length - 1];
+            this.mapManager.updateScooterPosition(endPt[0], endPt[1], this.currentSimHeading || 0, 0);
+            this.stopNavigation();
+            if (this.onArrival) this.onArrival();
+            return;
           }
 
-          let currentStep = steps[this.currentStepIndex];
-          let distM = 50;
+          // Advance current segment index smoothly
+          while (this.simSegIndex < coords.length - 2 && this.simCumulativeDist[this.simSegIndex + 1] <= this.simCurrentDistMeters) {
+            this.simSegIndex++;
+          }
 
-          if (currentStep.lat && currentStep.lng) {
-            const dKm = this.calculateDistance(currentPt[0], currentPt[1], currentStep.lat, currentStep.lng);
-            distM = Math.max(0, Math.round(dKm * 1000));
+          const segStartDist = this.simCumulativeDist[this.simSegIndex];
+          const segEndDist = this.simCumulativeDist[this.simSegIndex + 1] || (segStartDist + 1);
+          const segLen = Math.max(0.001, segEndDist - segStartDist);
+          const t = Math.max(0, Math.min(1, (this.simCurrentDistMeters - segStartDist) / segLen));
+
+          const p0 = coords[this.simSegIndex];
+          const p1 = coords[this.simSegIndex + 1];
+
+          // Exact continuous 60fps interpolated position along street vector
+          const currentLat = p0[0] + t * (p1[0] - p0[0]);
+          const currentLng = p0[1] + t * (p1[1] - p0[1]);
+
+          // Anticipate road angle smoothly by looking 7-10m ahead along route
+          const lookAheadTargetDist = Math.min(this.simTotalDistMeters, this.simCurrentDistMeters + 8);
+          let lookSegIdx = this.simSegIndex;
+          while (lookSegIdx < coords.length - 2 && this.simCumulativeDist[lookSegIdx + 1] < lookAheadTargetDist) {
+            lookSegIdx++;
+          }
+          const lookP0 = coords[lookSegIdx];
+          const lookP1 = coords[lookSegIdx + 1];
+          const lookLen = Math.max(0.001, this.simCumulativeDist[lookSegIdx + 1] - this.simCumulativeDist[lookSegIdx]);
+          const lookT = Math.max(0, Math.min(1, (lookAheadTargetDist - this.simCumulativeDist[lookSegIdx]) / lookLen));
+          const lookLat = lookP0[0] + lookT * (lookP1[0] - lookP0[0]);
+          const lookLng = lookP0[1] + lookT * (lookP1[1] - lookP0[1]);
+
+          let targetHeading = this.calculateHeading(currentLat, currentLng, lookLat, lookLng);
+          if (targetHeading === undefined || isNaN(targetHeading)) {
+            targetHeading = this.currentSimHeading || 0;
+          }
+
+          // Frame-rate independent organic angular turn smoothing
+          if (this.currentSimHeading === undefined) {
+            this.currentSimHeading = targetHeading;
           } else {
-            const stepFraction = 1 / steps.length;
-            const currentFractionInStep = (progress % stepFraction) / stepFraction;
-            distM = Math.max(10, Math.round((currentStep.distanceMeters || 150) * (1 - currentFractionInStep)));
+            let diff = ((targetHeading - this.currentSimHeading + 180) % 360) - 180;
+            if (diff < -180) diff += 360;
+            const turnRate = Math.min(1.0, 8.5 * dtSec);
+            this.currentSimHeading = (this.currentSimHeading + diff * turnRate + 360) % 360;
           }
 
-          // Advance to next step when within 15 meters
-          if (distM <= 15 && this.currentStepIndex < steps.length - 1) {
-            this.currentStepIndex++;
-            currentStep = steps[this.currentStepIndex];
-            this.announcedTurn150 = false;
-            this.announcedTurn35 = false;
-            if (currentStep.lat && currentStep.lng) {
-              const dKm = this.calculateDistance(currentPt[0], currentPt[1], currentStep.lat, currentStep.lng);
-              distM = Math.max(0, Math.round(dKm * 1000));
+          const heading = Math.round(this.currentSimHeading * 10) / 10;
+
+          // Pure 60 FPS gliding update for marker & map center
+          this.mapManager.updateScooterPosition(currentLat, currentLng, heading, speedKmh);
+          if (this.compassManager) {
+            this.compassManager.setHeading(heading);
+          }
+
+          // Record track points spaced by at least 2.5 meters
+          if (this.rideRecorder && this.rideRecorder.isRecording) {
+            if (Math.abs(this.simCurrentDistMeters - lastTrackRecordDist) >= 2.5) {
+              lastTrackRecordDist = this.simCurrentDistMeters;
+              this.rideRecorder.addGpsPoint(currentLat, currentLng, speedKmh, 35);
+              this.mapManager.drawLiveTrackPoint(currentLat, currentLng);
             }
           }
 
-          // Voice turn prompts
-          if (distM <= 150 && distM > 50 && !this.announcedTurn150 && this.voiceEngine) {
-            this.announcedTurn150 = true;
-            let st = (currentStep.street || 'la route').replace(/piste\s*cyclable/gi, 'la route');
-            this.voiceEngine.speak(`Dans 150 mètres, tournez ${currentStep.modifier === 'left' ? 'à gauche' : 'à droite'} sur ${st}`, 'turn');
-          } else if (distM <= 35 && !this.announcedTurn35 && this.voiceEngine) {
-            this.announcedTurn35 = true;
-            this.voiceEngine.speak(`Tournez ${currentStep.modifier === 'left' ? 'à gauche' : 'à droite'}`, 'turn');
-          }
+          // Throttle telemetry, turn-by-turn text, voice prompts & HUD DOM updates to 4Hz (every 250ms)
+          if (timestamp - lastTelemetryTime >= 250) {
+            lastTelemetryTime = timestamp;
 
-          if (this.onStepUpdate) {
-            this.onStepUpdate({
-              distanceMeters: distM,
-              street: currentStep.street,
-              instruction: currentStep.instruction,
-              modifier: currentStep.modifier
-            });
+            if (this.onSpeedUpdate) this.onSpeedUpdate(speedKmh);
+
+            const remDistM = Math.max(0, this.simTotalDistMeters - this.simCurrentDistMeters);
+            const remDistKm = (remDistM / 1000).toFixed(1);
+            const remMin = Math.max(1, Math.round(remDistM / Math.max(5, (speedKmh / 3.6) * 60)));
+            const batteryStatus = this.batteryEngine.estimateTrip(parseFloat(remDistKm), 5);
+
+            if (this.onTripUpdate) {
+              this.onTripUpdate({ remainingDistKm: remDistKm, remainingMin: remMin, batteryStatus });
+            }
+
+            // Real-time Turn-By-Turn step distance calculation & progression
+            const steps = this.activeRoute.steps || [];
+            if (steps.length > 0) {
+              if (this.currentStepIndex >= steps.length) {
+                this.currentStepIndex = steps.length - 1;
+              }
+
+              let currentStep = steps[this.currentStepIndex];
+              let distM = 50;
+
+              if (currentStep.lat && currentStep.lng) {
+                const dKm = this.calculateDistance(currentLat, currentLng, currentStep.lat, currentStep.lng);
+                distM = Math.max(0, Math.round(dKm * 1000));
+              } else {
+                const stepFraction = 1 / steps.length;
+                const progress = this.simCurrentDistMeters / Math.max(1, this.simTotalDistMeters);
+                const currentFractionInStep = (progress % stepFraction) / stepFraction;
+                distM = Math.max(10, Math.round((currentStep.distanceMeters || 150) * (1 - currentFractionInStep)));
+              }
+
+              // Advance to next step when within 15 meters
+              if (distM <= 15 && this.currentStepIndex < steps.length - 1) {
+                this.currentStepIndex++;
+                currentStep = steps[this.currentStepIndex];
+                this.announcedTurn150 = false;
+                this.announcedTurn35 = false;
+                if (currentStep.lat && currentStep.lng) {
+                  const dKm = this.calculateDistance(currentLat, currentLng, currentStep.lat, currentStep.lng);
+                  distM = Math.max(0, Math.round(dKm * 1000));
+                }
+              }
+
+              // Voice turn prompts & maneuvering cues
+              const isRnd = (currentStep.maneuverType === 'roundabout' || currentStep.maneuverType === 'rotary' || /(rond[- ]?point|giratoire)/i.test((currentStep.street || '') + ' ' + (currentStep.instruction || '')));
+              const isUt = (currentStep.modifier === 'uturn' || /(demi[- ]?tour)/i.test((currentStep.instruction || '') + ' ' + (currentStep.street || '')));
+              const exitNum = currentStep.exit || 2;
+
+              if (distM <= 150 && distM > 50 && !this.announcedTurn150 && this.voiceEngine) {
+                this.announcedTurn150 = true;
+                if (isRnd) {
+                  this.voiceEngine.speak(`Dans 150 mètres, au rond-point prenez la ${exitNum}e sortie`, 'turn');
+                } else if (isUt) {
+                  this.voiceEngine.speak(`Dans 150 mètres, faites demi-tour`, 'turn');
+                } else {
+                  let dirText = currentStep.modifier === 'sharp left' ? 'fortement à gauche' :
+                                (currentStep.modifier === 'sharp right' ? 'fortement à droite' :
+                                (currentStep.modifier === 'slight left' ? 'légèrement à gauche' :
+                                (currentStep.modifier === 'slight right' ? 'légèrement à droite' :
+                                (currentStep.modifier === 'left' ? 'à gauche' :
+                                (currentStep.modifier === 'right' ? 'à droite' : 'tout droit')))));
+                  let st = (currentStep.street || 'la route').replace(/piste\s*cyclable/gi, 'la route');
+                  this.voiceEngine.speak(`Dans 150 mètres, tournez ${dirText} sur ${st}`, 'turn');
+                }
+              } else if (distM <= 35 && !this.announcedTurn35 && this.voiceEngine) {
+                this.announcedTurn35 = true;
+                if (isRnd) {
+                  this.voiceEngine.speak(`Au rond-point, prenez la ${exitNum}e sortie`, 'turn');
+                } else if (isUt) {
+                  this.voiceEngine.speak(`Faites demi-tour dès que possible`, 'turn');
+                } else {
+                  let dirText = currentStep.modifier === 'sharp left' ? 'fortement à gauche' :
+                                (currentStep.modifier === 'sharp right' ? 'fortement à droite' :
+                                (currentStep.modifier === 'slight left' ? 'légèrement à gauche' :
+                                (currentStep.modifier === 'slight right' ? 'légèrement à droite' :
+                                (currentStep.modifier === 'left' ? 'à gauche' :
+                                (currentStep.modifier === 'right' ? 'à droite' : 'tout droit')))));
+                  this.voiceEngine.speak(`Tournez ${dirText}`, 'turn');
+                }
+              }
+
+              if (this.onStepUpdate) {
+                this.onStepUpdate({
+                  distanceMeters: distM,
+                  street: currentStep.street,
+                  instruction: currentStep.instruction,
+                  modifier: currentStep.modifier,
+                  maneuverType: currentStep.maneuverType,
+                  exit: currentStep.exit,
+                  isOver50: currentStep.isOver50
+                });
+              }
+            }
           }
         }
 
-        this.simIndex++;
-      }, Math.max(150, Math.round(600 / this.simulationSpeedMultiplier)));
+        this.simRafId = requestAnimationFrame(loop);
+      };
+
+      this.simRafId = requestAnimationFrame(loop);
     }
 
     handleGpsLocationUpdate(coords) {
@@ -3654,7 +3797,10 @@
               distanceMeters: distM,
               street: currentStep.street,
               instruction: currentStep.instruction,
-              modifier: currentStep.modifier
+              modifier: currentStep.modifier,
+              maneuverType: currentStep.maneuverType,
+              exit: currentStep.exit,
+              isOver50: currentStep.isOver50
             });
           }
         }
@@ -3677,7 +3823,14 @@
     stopNavigation() {
       this.isNavigating = false;
       this.isPaused = false;
-      if (this.simInterval) clearInterval(this.simInterval);
+      if (this.simRafId) {
+        cancelAnimationFrame(this.simRafId);
+        this.simRafId = null;
+      }
+      if (this.simInterval) {
+        clearInterval(this.simInterval);
+        this.simInterval = null;
+      }
       if (this.watchId) navigator.geolocation.clearWatch(this.watchId);
       if (this.etaHeartbeat) {
         clearInterval(this.etaHeartbeat);
@@ -3712,7 +3865,6 @@
 
     setSimulationSpeed(multiplier) {
       this.simulationSpeedMultiplier = multiplier;
-      if (this.isSimulated && this.isNavigating) this.startSimulation();
     }
 
     calculateDistance(lat1, lon1, lat2, lon2) {
@@ -4455,23 +4607,18 @@
       this.parkingManager.renderMarker();
       this.parkingManager.updateBanner();
 
-      // Restore saved destination or initialize default route so itinerary choices are immediately available
-      try {
-        const savedDest = localStorage.getItem('trottiwaze_last_dest');
-        if (savedDest) {
-          const d = JSON.parse(savedDest);
-          if (d && d.label && d.coords) {
-            this.elEndInput.value = d.label;
-            this.selectedEndCoords = d.coords;
-            setTimeout(() => this.calculateCurrentRoute(), 300);
-          }
-        } else {
-          // Default initial destination: Place de la Nation, Paris
-          this.elEndInput.value = 'Place de la Nation, Paris';
-          this.selectedEndCoords = { lat: 48.8482, lng: 2.3959 };
-          setTimeout(() => this.calculateCurrentRoute(), 300);
-        }
-      } catch (e) {}
+      // Au lancement : aucun itinéraire pré-calculé, le champ de recherche reste vide
+      this.selectedEndCoords = null;
+      this.calculatedRoutes = null;
+      if (this.elEndInput) {
+        this.elEndInput.value = '';
+      }
+      if (this.elWazeRouteSheet) {
+        this.elWazeRouteSheet.style.display = 'none';
+      }
+      if (this.elRoutePanel) {
+        this.elRoutePanel.classList.remove('panel-compact');
+      }
     }
 
     cacheDOMElements() {
@@ -6436,6 +6583,7 @@
 
       // Dezoom and fit complete route inside the visible viewport
       setTimeout(() => {
+        if (this.navigationEngine && this.navigationEngine.isNavigating) return;
         const selRoute = this.calculatedRoutes ? (this.calculatedRoutes[this.selectedRouteMode] || this.calculatedRoutes[Object.keys(this.calculatedRoutes)[0]]) : null;
         if (selRoute && selRoute.coordinates) {
           this.mapManager.fitRouteOverview(selRoute.coordinates);
@@ -7205,13 +7353,36 @@
 
     handleStepUpdate(step) {
       if (!step) return;
+
+      const isRoundabout = (step.maneuverType === 'roundabout' || step.maneuverType === 'rotary' || /(rond[- ]?point|giratoire|rotary|roundabout)/i.test((step.street || '') + ' ' + (step.instruction || '')));
+      const isUturn = (step.modifier === 'uturn' || /(demi[- ]?tour)/i.test((step.instruction || '') + ' ' + (step.street || '')));
+
+      // Distance incrémentée / décrémentée strictement par tranche de 5 mètres (pas 1m par 1m)
       if (this.elNavDistance) {
-        this.elNavDistance.textContent = step.distanceMeters !== undefined 
-          ? (step.distanceMeters <= 15 ? 'Tournez maintenant' : `Dans ${step.distanceMeters} m`) 
-          : 'Prenez la route';
+        if (step.distanceMeters === undefined || step.distanceMeters === null) {
+          this.elNavDistance.textContent = 'Prenez la route';
+        } else {
+          let r5 = Math.round(step.distanceMeters / 5) * 5;
+          if (r5 <= 10) {
+            if (isRoundabout) {
+              this.elNavDistance.textContent = 'Prenez la sortie';
+            } else if (isUturn) {
+              this.elNavDistance.textContent = 'Faites demi-tour';
+            } else if (step.maneuverType === 'arrive' || step.modifier === 'arrive') {
+              this.elNavDistance.textContent = 'Destination';
+            } else {
+              this.elNavDistance.textContent = 'Maintenant';
+            }
+          } else if (r5 >= 1000) {
+            this.elNavDistance.textContent = `Dans ${(r5 / 1000).toFixed(1)} km`;
+          } else {
+            this.elNavDistance.textContent = `Dans ${r5} m`;
+          }
+        }
       }
 
-      let cleanStreet = (step.street || step.instruction || 'Prendre la route').trim();
+      // Nom de rue et instruction
+      let cleanStreet = (step.instruction || step.street || 'Prendre la route').trim();
       cleanStreet = cleanStreet.replace(/piste\s*cyclable\s*protégée/gi, 'la route');
       cleanStreet = cleanStreet.replace(/piste\s*cyclable/gi, 'la route');
       cleanStreet = cleanStreet.replace(/voie\s*cyclable/gi, 'la route');
@@ -7239,14 +7410,85 @@
         }
       }
 
-      const icons = {
-        right: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M5 19V9a4 4 0 0 1 4-4h10"/><polyline points="15 9 19 5 15 1"/></svg>',
-        left: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><path d="M19 19V9a4 4 0 0 0-4-4H5"/><polyline points="9 9 5 5 9 1"/></svg>',
-        arrive: '<span style="font-size:24px;">🏁</span>',
-        straight: '<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5"><line x1="12" y1="19" x2="12" y2="5"/><polyline points="5 12 12 5 19 12"/></svg>'
-      };
+      // Numéro de sortie de rond-point
+      let exitNumber = step.exit;
+      if (!exitNumber && isRoundabout) {
+        const match = ((step.instruction || '') + ' ' + (step.street || '')).match(/(\d+)(?:e|ère|eme|ème)?\s*sortie/i);
+        if (match) exitNumber = parseInt(match[1], 10);
+      }
+      if (isRoundabout && !exitNumber) {
+        exitNumber = 2; // Sortie par défaut si non spécifiée
+      }
+
+      // Génération des icônes de direction exactes
+      let iconHtml = '';
+      if (isRoundabout) {
+        iconHtml = `
+          <div class="nav-roundabout-wrap" title="Rond-point, sortie ${exitNumber}">
+            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/>
+              <polyline points="18 1 18.5 6 13.5 6"/>
+            </svg>
+            <span class="nav-roundabout-exit-num">${exitNumber}</span>
+          </div>`;
+      } else if (isUturn) {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Faire demi-tour">
+            <path d="M17 20V9a5 5 0 0 0-10 0v11"/>
+            <polyline points="11 16 7 20 3 16"/>
+          </svg>`;
+      } else if (step.modifier === 'sharp right') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Tourner fortement à droite">
+            <path d="M6 20v-9a4 4 0 0 1 4-4h4a3 3 0 0 1 3 3v4"/>
+            <polyline points="13 11 17 14 21 11"/>
+          </svg>`;
+      } else if (step.modifier === 'right') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Tourner à droite">
+            <path d="M6 20V10a4 4 0 0 1 4-4h8"/>
+            <polyline points="14 10 18 6 14 2"/>
+          </svg>`;
+      } else if (step.modifier === 'slight right') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Serrez à droite">
+            <path d="M8 20v-7a5 5 0 0 1 2.5-4.3L17 5"/>
+            <polyline points="12 4 17 5 16 10"/>
+          </svg>`;
+      } else if (step.modifier === 'sharp left') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Tourner fortement à gauche">
+            <path d="M18 20v-9a4 4 0 0 0-4-4h-4a3 3 0 0 0-3 3v4"/>
+            <polyline points="11 11 7 14 3 11"/>
+          </svg>`;
+      } else if (step.modifier === 'left') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Tourner à gauche">
+            <path d="M18 20V10a4 4 0 0 0-4-4H6"/>
+            <polyline points="10 10 6 6 10 2"/>
+          </svg>`;
+      } else if (step.modifier === 'slight left') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Serrez à gauche">
+            <path d="M16 20v-7a5 5 0 0 0-2.5-4.3L7 5"/>
+            <polyline points="12 4 7 5 8 10"/>
+          </svg>`;
+      } else if (step.maneuverType === 'arrive' || step.modifier === 'arrive') {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" title="Arrivée">
+            <path d="M4 22V3"/>
+            <path d="M4 4h14l-2 5 2 5H4" fill="rgba(255,255,255,0.4)"/>
+          </svg>`;
+      } else {
+        iconHtml = `
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" title="Tout droit">
+            <line x1="12" y1="20" x2="12" y2="4"/>
+            <polyline points="6 10 12 4 18 10"/>
+          </svg>`;
+      }
+
       if (this.elNavIcon) {
-        this.elNavIcon.innerHTML = icons[step.modifier] || icons.straight;
+        this.elNavIcon.innerHTML = iconHtml;
       }
     }
 
