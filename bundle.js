@@ -6199,12 +6199,50 @@
           });
         }
 
-        // On double-click on map: ask confirmation to create route or drop landmark
-        this.mapManager.map.on('dblclick', async (e) => {
+        // Shared handler to pick destination on map (Touch Double-Tap, Long-Press, or PC Double-Click)
+        let lastInteractionHandled = 0;
+
+        const showTouchRipple = (latlng) => {
+          if (!this.mapManager || !this.mapManager.map) return;
+          try {
+            const ripple = L.circleMarker(latlng, {
+              radius: 8,
+              color: '#10b981',
+              weight: 3,
+              fillColor: '#10b981',
+              fillOpacity: 0.6,
+              interactive: false
+            }).addTo(this.mapManager.map);
+
+            let r = 8;
+            let op = 0.6;
+            const anim = setInterval(() => {
+              r += 4;
+              op -= 0.08;
+              if (op <= 0) {
+                clearInterval(anim);
+                try { this.mapManager.map.removeLayer(ripple); } catch(e) {}
+              } else {
+                ripple.setRadius(r);
+                ripple.setStyle({ opacity: op, fillOpacity: op });
+              }
+            }, 30);
+          } catch(e) {}
+        };
+
+        const triggerDestinationModal = async (latlng) => {
           if (this.elNavBanner && this.elNavBanner.style.display !== 'none') return;
-          const lat = parseFloat(e.latlng.lat.toFixed(5));
-          const lng = parseFloat(e.latlng.lng.toFixed(5));
+          lastInteractionHandled = Date.now();
+
+          const lat = parseFloat(latlng.lat.toFixed(5));
+          const lng = parseFloat(latlng.lng.toFixed(5));
           pendingDblClickCoords = { lat, lng, address: null };
+
+          showTouchRipple(latlng);
+
+          if (typeof navigator !== 'undefined' && navigator.vibrate) {
+            try { navigator.vibrate(40); } catch(e) {}
+          }
 
           if (itineraryLocText) {
             itineraryLocText.textContent = `📍 Recherche de l'adresse...`;
@@ -6213,7 +6251,6 @@
             itineraryModal.style.display = 'flex';
           }
 
-          // Asynchronously fetch reverse geocoding with street number & name
           try {
             const address = await this.routingEngine.reverseGeocode(lat, lng);
             if (pendingDblClickCoords && pendingDblClickCoords.lat === lat && pendingDblClickCoords.lng === lng) {
@@ -6223,9 +6260,140 @@
               }
             }
           } catch(err) {
-            console.warn('Error resolving address on dblclick:', err);
+            console.warn('Error resolving address on touch/click:', err);
           }
+        };
+
+        // 1. Desktop & Stylus: Double-Click
+        this.mapManager.map.on('dblclick', (e) => {
+          if (Date.now() - lastInteractionHandled < 700) return;
+          if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest &&
+              e.originalEvent.target.closest('.leaflet-control, .leaflet-popup, .leaflet-marker-icon, button, input, select, textarea, .floating-panel')) {
+            return;
+          }
+          triggerDestinationModal(e.latlng);
         });
+
+        // 2. Desktop & Tablet: Right-Click / Context Menu
+        this.mapManager.map.on('contextmenu', (e) => {
+          if (Date.now() - lastInteractionHandled < 700) return;
+          if (e.originalEvent && e.originalEvent.target && e.originalEvent.target.closest &&
+              e.originalEvent.target.closest('.leaflet-control, .leaflet-popup, .leaflet-marker-icon, button, input, select, textarea, .floating-panel')) {
+            return;
+          }
+          triggerDestinationModal(e.latlng);
+        });
+
+        // 3. Mobile Phones & Tablets: Touch Double-Tap & Long-Press (Appui long ~500ms)
+        const mapEl = this.mapManager.map.getContainer();
+        if (mapEl) {
+          let lastTapTime = 0;
+          let lastTapX = 0;
+          let lastTapY = 0;
+          let touchStartX = 0;
+          let touchStartY = 0;
+          let touchMoved = false;
+          let longPressTimer = null;
+          let longPressFired = false;
+
+          mapEl.addEventListener('touchstart', (e) => {
+            if (e.touches.length !== 1) {
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+              touchMoved = true;
+              return;
+            }
+
+            const target = e.target;
+            if (target && target.closest && target.closest('.leaflet-control, .leaflet-popup, .leaflet-marker-icon, button, input, select, textarea, .floating-panel')) {
+              return;
+            }
+
+            const touch = e.touches[0];
+            touchStartX = touch.clientX;
+            touchStartY = touch.clientY;
+            touchMoved = false;
+            longPressFired = false;
+
+            if (longPressTimer) clearTimeout(longPressTimer);
+            longPressTimer = setTimeout(() => {
+              if (!touchMoved && !longPressFired) {
+                longPressFired = true;
+                const rect = mapEl.getBoundingClientRect();
+                const pt = L.point(touchStartX - rect.left, touchStartY - rect.top);
+                const latlng = this.mapManager.map.containerPointToLatLng(pt);
+                triggerDestinationModal(latlng);
+              }
+            }, 500);
+          }, { passive: true });
+
+          mapEl.addEventListener('touchmove', (e) => {
+            if (e.touches.length !== 1) {
+              touchMoved = true;
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+              return;
+            }
+            const touch = e.touches[0];
+            const dist = Math.hypot(touch.clientX - touchStartX, touch.clientY - touchStartY);
+            if (dist > 12) {
+              touchMoved = true;
+              if (longPressTimer) {
+                clearTimeout(longPressTimer);
+                longPressTimer = null;
+              }
+            }
+          }, { passive: true });
+
+          mapEl.addEventListener('touchend', (e) => {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+
+            if (longPressFired) {
+              longPressFired = false;
+              return;
+            }
+
+            if (touchMoved) return;
+
+            const target = e.target;
+            if (target && target.closest && target.closest('.leaflet-control, .leaflet-popup, .leaflet-marker-icon, button, input, select, textarea, .floating-panel')) {
+              return;
+            }
+
+            const now = Date.now();
+            const timeSinceLastTap = now - lastTapTime;
+            const distFromLastTap = Math.hypot(touchStartX - lastTapX, touchStartY - lastTapY);
+
+            // Double Tap condition: between 40ms and 380ms, within 35px
+            if (timeSinceLastTap > 40 && timeSinceLastTap < 380 && distFromLastTap < 35) {
+              lastTapTime = 0;
+              const rect = mapEl.getBoundingClientRect();
+              const pt = L.point(touchStartX - rect.left, touchStartY - rect.top);
+              const latlng = this.mapManager.map.containerPointToLatLng(pt);
+              triggerDestinationModal(latlng);
+            } else {
+              lastTapTime = now;
+              lastTapX = touchStartX;
+              lastTapY = touchStartY;
+            }
+          }, { passive: true });
+
+          mapEl.addEventListener('touchcancel', () => {
+            if (longPressTimer) {
+              clearTimeout(longPressTimer);
+              longPressTimer = null;
+            }
+            longPressFired = false;
+            touchMoved = true;
+          }, { passive: true });
+        }
       }
 
       // Navigation Engine Callbacks
